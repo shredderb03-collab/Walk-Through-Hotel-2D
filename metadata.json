@@ -1,0 +1,6 @@
+{
+  "name": "Doors 2D",
+  "description": "An atmospheric 2D horror survival game. Navigate doors 1-100, solve fuse and wiring puzzles, hide in closets from rushing monsters, and fix the elevator switch to escape.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
