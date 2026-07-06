@@ -5,7 +5,7 @@
 
 export type GameState = 'START' | 'PLAYING' | 'GAMEOVER' | 'VICTORY';
 
-export type ItemType = 'bandage' | 'crucifix' | 'radio' | 'flashlight' | 'cola' | 'lockpick' | 'ipad' | 'luck_potion';
+export type ItemType = 'bandage' | 'crucifix' | 'radio' | 'flashlight' | 'cola' | 'lockpick' | 'ipad' | 'luck_potion' | 'skeleton_key' | 'pendant';
 
 export interface InventoryItem {
   id: string;

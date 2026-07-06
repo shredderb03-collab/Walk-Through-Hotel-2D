@@ -24,7 +24,8 @@ import {
   Coins,
   Music,
   Plus,
-  Lock
+  Lock,
+  ChevronDown
 } from 'lucide-react';
 import { GameStats, GameState, InventoryItem, ItemType } from '../types';
 import FusePuzzle from './FusePuzzle';
@@ -170,6 +171,45 @@ export default function GameCanvas({
   const [digit3, setDigit3] = useState(0);
   const [chestErrorFlash, setChestErrorFlash] = useState(false);
 
+  // Amazon Box States
+  interface AmazonBox {
+    id: string;
+    x: number;
+    y: number;
+    targetY: number;
+    vy: number;
+    scaleX: number;
+    scaleY: number;
+    itemType: ItemType;
+    itemLabel: string;
+    itemDescription: string;
+    isOpening: boolean;
+    isOpened: boolean;
+    openProgress: number;
+    door: number;
+    beamAlpha?: number;
+    awarded?: boolean;
+  }
+  const [amazonBoxes, setAmazonBoxes] = useState<AmazonBox[]>([]);
+
+  // Drone Delivery States
+  interface DroneDelivery {
+    id: string;
+    x: number;
+    y: number;
+    targetX: number;
+    targetY: number;
+    state: 'FLYING_IN' | 'HOVERING' | 'DROPPING' | 'FLYING_AWAY';
+    itemType: ItemType;
+    itemLabel: string;
+    itemDescription: string;
+    boxId: string;
+    timer: number;
+  }
+  const [drones, setDrones] = useState<DroneDelivery[]>([]);
+  const pendingOrdersRef = useRef<Array<{ id: string; type: ItemType; label: string; desc: string }>>([]);
+  const awardedBoxIdsRef = useRef<Set<string>>(new Set());
+
   // iPad States
   const [showIpad, setShowIpad] = useState(false);
   const [ipadActiveApp, setIpadActiveApp] = useState<'HOME' | 'SHOP'>('HOME');
@@ -278,9 +318,12 @@ export default function GameCanvas({
   const [dupeDoors, setDupeDoors] = useState<{ x: number; doorNumber: number; isReal: boolean; isOpened: boolean }[]>([]);
   const [dupeJumpscare, setDupeJumpscare] = useState(false);
 
-  // Monster (Rush) States
+  // Monster (Rush / Ambush) States
   const [monsterActive, setMonsterActive] = useState(false);
   const [monsterX, setMonsterX] = useState(-200);
+  const [activeMonsterType, setActiveMonsterType] = useState<'RUSH' | 'AMBUSH'>('RUSH');
+  const ambushDirRef = useRef(1); // 1 = right, -1 = left
+  const ambushCyclesRef = useRef(0); // rebounds remaining
 
   // Banish sequence for Crucifix action
   const [banishActive, setBanishActive] = useState(false);
@@ -293,6 +336,14 @@ export default function GameCanvas({
   // Input states for keyboard
   const keysPressed = useRef<{ [key: string]: boolean }>({});
 
+  // Refs to prevent room double-initialization and duplicate monster spawns
+  const lastInitializedRoomRef = useRef<number>(0);
+  const monsterRushTimeoutRef = useRef<any>(null);
+  const monsterCleanupTimeoutRef = useRef<any>(null);
+  const lastBoxWarningTimeRef = useRef<number>(0);
+  const skullInteractedRef = useRef<boolean>(false);
+  const openingBoxIdsRef = useRef<Set<string>>(new Set());
+
   // Audio mute helper
   const [muted, setMuted] = useState(false);
 
@@ -301,6 +352,17 @@ export default function GameCanvas({
 
   // Touch controls helpers
   const [touchSprinting, setTouchSprinting] = useState(false);
+
+  // Refs for stable keyboard listener
+  const gameStateRef = useRef(gameState);
+  const showIpadRef = useRef(showIpad);
+  const inventoryRef = useRef(inventory);
+  const selectedItemIdxRef = useRef(selectedItemIdx);
+  const flashlightBatteryRef = useRef(flashlightBattery);
+  const flashlightOnRef = useRef(flashlightOn);
+  const mutedRef = useRef(muted);
+  const handleInteractionRef = useRef<() => void>(() => {});
+  const useActiveItemRef = useRef<() => void>(() => {});
 
   // Determine if a room should be locked / have a puzzle
   // Locked doors at doors: 18 (Key 1), 36 (Key 2), 54 (Key 3), 72 (Key 4), 90 (Key 5)
@@ -332,6 +394,22 @@ export default function GameCanvas({
 
     // Setup / reset a room when entering
   const initRoom = (doorNum: number) => {
+    if (lastInitializedRoomRef.current === doorNum) {
+      // Already initialized this room! Prevent double-triggering
+      return;
+    }
+    lastInitializedRoomRef.current = doorNum;
+
+    // Clear any active monster timeouts from previous room transitions
+    if (monsterRushTimeoutRef.current) {
+      clearTimeout(monsterRushTimeoutRef.current);
+      monsterRushTimeoutRef.current = null;
+    }
+    if (monsterCleanupTimeoutRef.current) {
+      clearTimeout(monsterCleanupTimeoutRef.current);
+      monsterCleanupTimeoutRef.current = null;
+    }
+
     // Player starts at left side
     setPlayerPosition(150);
     setIsHiding(false);
@@ -341,8 +419,8 @@ export default function GameCanvas({
     const checkpoint = isKeyCheckpoint(doorNum);
     
     // Dupe setup
-    // Reduced chance (12% instead of 35%) so Dupe doesn't show up too many times
-    const hasDupe = (doorNum > 3 && doorNum !== 40 && doorNum !== 100 && !checkpoint && Math.random() < 0.12);
+    // Reduced chance (5% instead of 12%) so Dupe is very rare
+    const hasDupe = (doorNum > 3 && doorNum !== 40 && doorNum !== 100 && !checkpoint && Math.random() < 0.05);
     setDupeActive(hasDupe);
     if (hasDupe) {
       const isLeftReal = Math.random() < 0.5;
@@ -366,9 +444,9 @@ export default function GameCanvas({
     }
 
     // Side Room (Grey Door with Green Stripe) Spawning Setup
-    // 35% chance in standard rooms > 1 (excluding shop 40, elevator 100, checkpoints, or Dupe rooms)
+    // 8% chance in standard rooms > 1 so Code Room is rare
     const canHaveSideRoom = (doorNum > 1 && doorNum !== 40 && doorNum !== 100 && !checkpoint && !hasDupe);
-    const sideRoomSpawn = canHaveSideRoom && (Math.random() < 0.35);
+    const sideRoomSpawn = canHaveSideRoom && (Math.random() < 0.08);
     setHasSideRoom(sideRoomSpawn);
     if (sideRoomSpawn) {
       setSideRoomDoorX(hasDupe ? 420 : 360);
@@ -579,9 +657,11 @@ export default function GameCanvas({
       // safe positions avoiding left return or right boundaries
       setSkullX(240 + Math.floor(Math.random() * 420));
       setSkullInteracted(false);
+      skullInteractedRef.current = false;
     } else {
       setSkullX(0);
       setSkullInteracted(false);
+      skullInteractedRef.current = false;
     }
 
     // Generate closets (None in shop Door 40!)
@@ -701,8 +781,8 @@ export default function GameCanvas({
     banishActiveRef.current = false;
     banishProgressRef.current = 0;
 
-    // Flickering lights chance (25% in rooms without locked door puzzles, except door 40 and 100)
-    if (doorNum > 1 && doorNum !== 40 && doorNum < 100 && !checkpoint && Math.random() < 0.25) {
+    // Flickering lights chance (11% in rooms without locked door puzzles, except door 40 and 100)
+    if (doorNum > 1 && doorNum !== 40 && doorNum < 100 && !checkpoint && Math.random() < 0.11) {
       triggerMonsterSequence();
     }
   };
@@ -712,20 +792,44 @@ export default function GameCanvas({
     setIsFlickering(true);
     if (!muted) sound.playFlicker();
 
+    // 75% chance of Rush, 25% chance of Ambush
+    const type = Math.random() < 0.25 ? 'AMBUSH' : 'RUSH';
+    setActiveMonsterType(type);
+
+    if (type === 'AMBUSH') {
+      ambushDirRef.current = 1; // start rushing right
+      ambushCyclesRef.current = Math.random() < 0.5 ? 2 : 3; // rebounds back and forth
+      setAlertMessage("⚠️ AMBUSH IS INCOMING! HIDE IN A CLOSET IMMEDIATELY! ⚠️");
+      setTimeout(() => setAlertMessage(""), 4500);
+    } else {
+      setAlertMessage("⚠️ RUSH IS INCOMING! HIDE! ⚠️");
+      setTimeout(() => setAlertMessage(""), 3000);
+    }
+
+    // Clear any active timeouts before setting new ones
+    if (monsterRushTimeoutRef.current) clearTimeout(monsterRushTimeoutRef.current);
+    if (monsterCleanupTimeoutRef.current) clearTimeout(monsterCleanupTimeoutRef.current);
+
     // After 1.8 seconds of flickering lights, monster starts rushing
-    setTimeout(() => {
+    monsterRushTimeoutRef.current = setTimeout(() => {
       setRoomDarkened(true);
       setMonsterActive(true);
       setMonsterX(-250);
-      if (!muted) sound.playMonsterRush(2.5); // 2.5 seconds duration
+      if (!muted) {
+        if (type === 'AMBUSH') {
+          sound.playAmbushScream(3.5);
+        } else {
+          sound.playMonsterRush(2.5);
+        }
+      }
     }, 1800);
 
-    // Fail-safe cleanup to guarantee the screen goes back to normal after 5.5 seconds
-    setTimeout(() => {
+    // Fail-safe cleanup to guarantee the screen goes back to normal after 7.5 seconds
+    monsterCleanupTimeoutRef.current = setTimeout(() => {
       setIsFlickering(false);
       setRoomDarkened(false);
       setMonsterActive(false);
-    }, 5500);
+    }, 7500);
   };
 
   const triggerDupeJumpscare = () => {
@@ -797,12 +901,16 @@ export default function GameCanvas({
   // Initial room trigger
   useEffect(() => {
     if (gameState === 'PLAYING') {
+      // Reset initialization tracker for fresh run
+      lastInitializedRoomRef.current = 0;
+
       // Starting items: give some pocket coins initially
       setCoins(20);
       setHealth(100);
       setStamina(100);
       setFlashlightBattery(100);
       setFlashlightOn(true);
+      setAmazonBoxes([]);
       
       const startingFlashlight: InventoryItem = {
         id: 'starting-flashlight',
@@ -816,18 +924,55 @@ export default function GameCanvas({
     }
   }, [gameState]);
 
+  // Trigger Drone Delivery when exiting the iPad
+  useEffect(() => {
+    if (!showIpad && pendingOrdersRef.current.length > 0) {
+      // For each pending order, dispatch a delivery drone!
+      const orders = [...pendingOrdersRef.current];
+      pendingOrdersRef.current = []; // Clear pending list immediately to avoid double execution
+
+      orders.forEach((order, index) => {
+        // Stagger the drones
+        setTimeout(() => {
+          // Drone flies in from left (x = -150) to hover above player, then fly away right
+          const targetX = Math.max(120, Math.min(780, playerPosition + (index * 45) - 45));
+          const newDrone: DroneDelivery = {
+            id: Math.random().toString(),
+            x: -150,
+            y: 80, // High up in the sky
+            targetX: targetX,
+            targetY: 306, // Sitting ground Y center
+            state: 'FLYING_IN',
+            itemType: order.type,
+            itemLabel: order.label,
+            itemDescription: order.desc,
+            boxId: order.id,
+            timer: 60 // Hover time in ticks (~1 second)
+          };
+          setDrones(prevDrones => [...prevDrones, newDrone]);
+          if (!muted) {
+            sound.playUnlock();
+          }
+        }, index * 800); // 0.8s stagger
+      });
+      
+      setAlertMessage("JEFF'S DELIVERY DRONES DEPLOYED! 🛸");
+      setTimeout(() => setAlertMessage(""), 3000);
+    }
+  }, [showIpad, playerPosition, muted]);
+
   // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameState !== 'PLAYING') return;
+      if (gameStateRef.current !== 'PLAYING') return;
 
       const code = e.code;
       
       // If iPad is open, allow pressing Escape or KeyQ to close it
-      if (showIpad) {
+      if (showIpadRef.current) {
         if (code === 'KeyQ' || code === 'Escape') {
           setShowIpad(false);
-          if (!muted) sound.playClick();
+          if (!mutedRef.current) sound.playClick();
         }
         return;
       }
@@ -844,20 +989,20 @@ export default function GameCanvas({
       // Hiding / Interaction trigger with 'KeyE' or 'Space'
       if (code === 'KeyE' || code === 'Space') {
         e.preventDefault();
-        handleInteraction();
+        handleInteractionRef.current();
       }
 
       // Flashlight Toggle
       if (code === 'KeyF') {
-        const hasFlashlight = inventory.some(item => item.type === 'flashlight');
-        const isHoldingFlashlight = inventory[selectedItemIdx]?.type === 'flashlight';
+        const hasFlashlight = inventoryRef.current.some(item => item.type === 'flashlight');
+        const isHoldingFlashlight = inventoryRef.current[selectedItemIdxRef.current]?.type === 'flashlight';
         if (!hasFlashlight) {
           setAlertMessage("YOU DO NOT HAVE A FLASHLIGHT!");
           setTimeout(() => setAlertMessage(""), 2000);
         } else if (!isHoldingFlashlight) {
           setAlertMessage("EQUIP FLASHLIGHT IN HOTBAR!");
           setTimeout(() => setAlertMessage(""), 2000);
-        } else if (flashlightBattery <= 0) {
+        } else if (flashlightBatteryRef.current <= 0) {
           setAlertMessage("FLASHLIGHT BATTERY IS DEAD!");
           setTimeout(() => setAlertMessage(""), 2000);
         } else {
@@ -868,7 +1013,7 @@ export default function GameCanvas({
 
       // Quick use / Consume active item [KeyQ or click]
       if (code === 'KeyQ') {
-        useActiveItem();
+        useActiveItemRef.current();
       }
     };
 
@@ -882,26 +1027,7 @@ export default function GameCanvas({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [
-    gameState,
-    playerPosition,
-    currentDoor,
-    isHiding,
-    closetX,
-    isDoorLocked,
-    keysCollected,
-    showFusePuzzle,
-    hasNewSwitch,
-    switchRepaired,
-    inventory,
-    selectedItemIdx,
-    drawers,
-    coins,
-    dupeActive,
-    dupeDoors,
-    showIpad,
-    muted
-  ]);
+  }, []);
 
   // Consume / Use active item helper
   const useActiveItem = () => {
@@ -1005,6 +1131,40 @@ export default function GameCanvas({
         setTimeout(() => setAlertMessage(""), 2000);
       }
     } 
+    else if (activeItem.type === 'skeleton_key') {
+      if (inSideRoom && Math.abs(playerPosition - 600) < 55 && !sideRoomChestUnlocked) {
+        setSideRoomChestUnlocked(true);
+        if (!muted) sound.playUnlock();
+        setCoins(prev => prev + 12);
+        triggerCoinAnimation(12, playerPosition);
+        floatingTextsRef.current.push({
+          x: playerPosition,
+          y: 200,
+          text: "+12 COINS 🪙",
+          color: "#fbbf24",
+          life: 120
+        });
+        setAlertMessage("UNLOCKED SECURE CHEST! THE SKELETON KEY IS RETAINED.");
+        setTimeout(() => setAlertMessage(""), 3500);
+      }
+      else if (!inSideRoom && isDoorLocked && playerPosition >= 740) {
+        setIsDoorLocked(false);
+        setIsRoomKeyLocked(false);
+        if (!muted) sound.playUnlock();
+        floatingTextsRef.current.push({
+          x: playerPosition,
+          y: 220,
+          text: "UNLOCKED WITH SKELETON KEY! 🗝️",
+          color: "#a78bfa",
+          life: 120
+        });
+        setAlertMessage("THE DOOR IS UNLOCKED! SKELETON KEY RETAINED.");
+        setTimeout(() => setAlertMessage(""), 3000);
+      } else {
+        setAlertMessage("NOTHING TO UNLOCK WITH SKELETON KEY!");
+        setTimeout(() => setAlertMessage(""), 2000);
+      }
+    }
     else if (activeItem.type === 'ipad') {
       setShowIpad(prev => !prev);
       setIpadActiveApp('HOME');
@@ -1018,6 +1178,35 @@ export default function GameCanvas({
 
   // Interaction logic
   const handleInteraction = () => {
+    // Amazon Box Interaction check
+    const nearBox = amazonBoxes.find(box => box.door === currentDoor && !box.isOpened && !box.isOpening && Math.abs(playerPosition - box.x) < 45);
+    if (nearBox) {
+      if (nearBox.itemType !== 'battery' && inventory.length >= 5) {
+        setAlertMessage("HOTBAR FULL! MAKE SPACE IN YOUR INVENTORY.");
+        setTimeout(() => setAlertMessage(""), 2000);
+        return;
+      }
+      
+      if (!openingBoxIdsRef.current.has(nearBox.id)) {
+        openingBoxIdsRef.current.add(nearBox.id);
+        // Start cool opening animation
+        setAmazonBoxes(prev => prev.map(b => b.id === nearBox.id ? { ...b, isOpening: true } : b));
+        
+        if (!muted) {
+          sound.playUnlock();
+        }
+        
+        floatingTextsRef.current.push({
+          x: nearBox.x,
+          y: 220,
+          text: `UNBOXING... 📦`,
+          color: "#fbbf24",
+          life: 60
+        });
+      }
+      return;
+    }
+
     // If shop is open, just close it or let click handle
     if (showShop) {
       setShowShop(false);
@@ -1025,7 +1214,8 @@ export default function GameCanvas({
     }
 
     // Skull Interaction (gives 4 coins, crushing effect)
-    if (hasSkull && !skullInteracted && !inSideRoom && Math.abs(playerPosition - skullX) < 40) {
+    if (hasSkull && !skullInteractedRef.current && !inSideRoom && Math.abs(playerPosition - skullX) < 40) {
+      skullInteractedRef.current = true;
       setSkullInteracted(true);
       setCoins(prev => prev + 4);
       triggerCoinAnimation(4, skullX);
@@ -1084,7 +1274,7 @@ export default function GameCanvas({
     }
 
     // 2. Search drawers check
-    const nearDrawer = !inSideRoom ? drawers.find(d => !d.searched && Math.abs(playerPosition - d.x) < 45) : undefined;
+    const nearDrawer = !inSideRoom ? drawers.find(d => !d.searched && Math.abs(playerPosition - d.x) < 75) : undefined;
     if (nearDrawer) {
       nearDrawer.searched = true;
       setDrawers([...drawers]);
@@ -1348,6 +1538,17 @@ export default function GameCanvas({
     }
   };
 
+  // Keep refs updated on every render
+  gameStateRef.current = gameState;
+  showIpadRef.current = showIpad;
+  inventoryRef.current = inventory;
+  selectedItemIdxRef.current = selectedItemIdx;
+  flashlightBatteryRef.current = flashlightBattery;
+  flashlightOnRef.current = flashlightOn;
+  mutedRef.current = muted;
+  handleInteractionRef.current = handleInteraction;
+  useActiveItemRef.current = useActiveItem;
+
   // Buy Item from Shop Counter
   const buyItem = (type: ItemType, cost: number, label: string, desc: string) => {
     if (coins < cost) {
@@ -1448,18 +1649,65 @@ export default function GameCanvas({
           if (!muted) sound.playUnlock();
           initRoom(nextDoor);
         }
+
+        // Proximity Auto-Interactions (seamless high-speed looting & unboxing)
+        // A. Skull Proximity Auto-Crush
+        if (hasSkull && !skullInteractedRef.current && !inSideRoom && Math.abs(playerPosition - skullX) < 40) {
+          skullInteractedRef.current = true;
+          setSkullInteracted(true);
+          setCoins(prev => prev + 4);
+          triggerCoinAnimation(4, skullX);
+          if (!muted) sound.playCoin();
+          floatingTextsRef.current.push({
+            x: skullX,
+            y: 200,
+            text: "+4 COINS (CRUSHED SKULL) 💀",
+            color: "#fbbf24",
+            life: 110
+          });
+          setAlertMessage("YOU AUTO-CRUSHED THE SKULL AND FOUND 4 COINS!");
+          setTimeout(() => setAlertMessage(""), 3000);
+        }
+
+        // B. Amazon Box Proximity Auto-Unboxing
+        const nearBox = amazonBoxes.find(box => box.door === currentDoor && !box.isOpened && !box.isOpening && Math.abs(playerPosition - box.x) < 45);
+        if (nearBox) {
+          if (nearBox.itemType !== 'battery' && inventory.length >= 5) {
+            if (Date.now() - lastBoxWarningTimeRef.current > 2500) {
+              setAlertMessage("HOTBAR FULL! MAKE SPACE IN YOUR INVENTORY.");
+              setTimeout(() => setAlertMessage(""), 2000);
+              lastBoxWarningTimeRef.current = Date.now();
+            }
+          } else {
+            if (!openingBoxIdsRef.current.has(nearBox.id)) {
+              openingBoxIdsRef.current.add(nearBox.id);
+              setAmazonBoxes(prev => prev.map(b => b.id === nearBox.id ? { ...b, isOpening: true } : b));
+              if (!muted) sound.playUnlock();
+              floatingTextsRef.current.push({
+                x: nearBox.x,
+                y: 220,
+                text: `UNBOXING... 📦`,
+                color: "#fbbf24",
+                life: 60
+              });
+            }
+          }
+        }
       }
 
-      // 2. Update Monster Rush / Collision / Banishment
+      // 2. Update Monster Rush / Collision / Banishment / Rebound
       if (monsterActive && !banishActiveRef.current && !inSideRoom) {
         setMonsterX(prev => {
-          const next = prev + 12; // Speed
+          const speed = activeMonsterType === 'AMBUSH' ? 14 : 12;
+          const next = prev + speed * ambushDirRef.current;
 
           // Collision Check
           if (next >= playerPosition - 60 && next <= playerPosition + 60 && !monsterHitTriggered.current) {
             if (!isHiding) {
               // Crucial choice: check if player is holding/equipping Crucifix
               const equippedItem = inventory[selectedItemIdx];
+              const pendantIdx = inventory.findIndex(item => item.type === 'pendant');
+
               if (equippedItem?.type === 'crucifix') {
                 // BANISH ACTIVATED!
                 monsterHitTriggered.current = true;
@@ -1469,7 +1717,7 @@ export default function GameCanvas({
                 
                 if (!muted) sound.playBanish();
                 // Consume Crucifix
-                setInventory(prev => prev.filter((_, idx) => idx !== selectedItemIdx));
+                setInventory(prevInv => prevInv.filter((_, idx) => idx !== selectedItemIdx));
                 
                 floatingTextsRef.current.push({
                   x: playerPosition,
@@ -1478,20 +1726,39 @@ export default function GameCanvas({
                   color: "#3b82f6",
                   life: 150
                 });
-              } else {
-                // Take 50 Damage!
+              } else if (pendantIdx !== -1) {
+                // JEFF'S PENDANT BLOCKS DAMAGE PASSIVELY!
                 monsterHitTriggered.current = true;
-                setHealth(prev => {
-                  const nextHealth = Math.max(0, prev - 50);
+                
+                // Consume the pendant from inventory
+                setInventory(prevInv => prevInv.filter((_, idx) => idx !== pendantIdx));
+                
+                if (!muted) sound.playHeal(); // protective chime
+                
+                floatingTextsRef.current.push({
+                  x: playerPosition,
+                  y: 180,
+                  text: "PENDANT SHIELDED YOU! 🛡️",
+                  color: "#60a5fa",
+                  life: 150
+                });
+                setAlertMessage("JEFF'S LUCKY PENDANT SHATTERED BUT SAVED YOUR LIFE!");
+                setTimeout(() => setAlertMessage(""), 3500);
+              } else {
+                // Take Damage
+                monsterHitTriggered.current = true;
+                setHealth(prevHealth => {
+                  const dmg = activeMonsterType === 'AMBUSH' ? 65 : 50;
+                  const nextHealth = Math.max(0, prevHealth - dmg);
                   if (nextHealth <= 0) {
                     setGameState('GAMEOVER');
-                    onGameOver('RUSH');
+                    onGameOver(activeMonsterType);
                   } else {
                     // Flash notification of impact
                     floatingTextsRef.current.push({
                       x: playerPosition,
                       y: 220,
-                      text: "-50 HEALTH",
+                      text: `-${dmg} HEALTH 💀`,
                       color: "#ef4444",
                       life: 90
                     });
@@ -1503,11 +1770,56 @@ export default function GameCanvas({
             }
           }
 
-          // Offscreen despan
-          if (next > 1100) {
-            setMonsterActive(false);
-            setIsFlickering(false);
-            setRoomDarkened(false);
+          // Ambush Rebounding Mechanics
+          if (activeMonsterType === 'AMBUSH') {
+            if (ambushDirRef.current === 1 && next > 1100) {
+              if (ambushCyclesRef.current > 0) {
+                ambushDirRef.current = -1; // reverse back left
+                ambushCyclesRef.current -= 1;
+                monsterHitTriggered.current = false; // reset hit trigger
+                if (!muted) sound.playAmbushScream(1.8);
+                setAlertMessage("⚠️ AMBUSH REBOUNDS! STAY HIDDEN! ⚠️");
+                setTimeout(() => setAlertMessage(""), 2000);
+                floatingTextsRef.current.push({
+                  x: playerPosition,
+                  y: 120,
+                  text: "AMBUSH REBOUNDS! 🔄",
+                  color: "#10b981",
+                  life: 80
+                });
+              } else {
+                setMonsterActive(false);
+                setIsFlickering(false);
+                setRoomDarkened(false);
+              }
+            } else if (ambushDirRef.current === -1 && next < -250) {
+              if (ambushCyclesRef.current > 0) {
+                ambushDirRef.current = 1; // reverse back right
+                ambushCyclesRef.current -= 1;
+                monsterHitTriggered.current = false; // reset hit trigger
+                if (!muted) sound.playAmbushScream(1.8);
+                setAlertMessage("⚠️ AMBUSH REBOUNDS! STAY HIDDEN! ⚠️");
+                setTimeout(() => setAlertMessage(""), 2000);
+                floatingTextsRef.current.push({
+                  x: playerPosition,
+                  y: 120,
+                  text: "AMBUSH REBOUNDS! 🔄",
+                  color: "#10b981",
+                  life: 80
+                });
+              } else {
+                setMonsterActive(false);
+                setIsFlickering(false);
+                setRoomDarkened(false);
+              }
+            }
+          } else {
+            // Standard Rush behavior: just offscreen despawn
+            if (next > 1100) {
+              setMonsterActive(false);
+              setIsFlickering(false);
+              setRoomDarkened(false);
+            }
           }
           return next;
         });
@@ -1532,6 +1844,203 @@ export default function GameCanvas({
         ft.life -= 1;
       });
       floatingTextsRef.current = floatingTextsRef.current.filter(ft => ft.life > 0);
+
+      // 3.5 Update Amazon Boxes physics and animations
+      let itemsToAward: { type: ItemType; label: string; description: string }[] = [];
+      let rechargeBattery = false;
+
+      setAmazonBoxes(prev => {
+        let changed = false;
+        const next = prev.map(box => {
+          if (box.door !== currentDoor) return box;
+          
+          let nextY = box.y;
+          let nextVy = box.vy;
+          let nextScaleX = box.scaleX;
+          let nextScaleY = box.scaleY;
+          let nextProgress = box.openProgress;
+          let nextOpening = box.isOpening;
+          let nextOpened = box.isOpened;
+          let nextBeam = box.beamAlpha !== undefined ? box.beamAlpha : 1;
+          
+          // Beam alpha decay
+          if (nextBeam > 0) {
+            nextBeam = Math.max(0, nextBeam - 0.015);
+          }
+          
+          // Physics
+          if (nextY < box.targetY) {
+            nextVy += 0.45; // Gravity
+            nextY += nextVy;
+            if (nextY >= box.targetY) {
+              nextY = box.targetY;
+              nextVy = -nextVy * 0.35; // Bounce
+              if (Math.abs(nextVy) < 1) {
+                nextVy = 0;
+              }
+              // Squash on landing impact
+              nextScaleX = 1.25;
+              nextScaleY = 0.75;
+              
+              if (!muted && Math.abs(nextVy) > 1.5) {
+                sound.playClick();
+              }
+            }
+            changed = true;
+          } else {
+            // Decay scales back to 1
+            if (nextScaleX > 1) nextScaleX -= 0.04;
+            if (nextScaleX < 1) nextScaleX = 1;
+            if (nextScaleY < 1) nextScaleY += 0.04;
+            if (nextScaleY > 1) nextScaleY = 1;
+          }
+          
+          // Opening progress
+          if (nextOpening) {
+            nextProgress += 0.02; // Take ~0.8s
+            if (nextProgress >= 1) {
+              nextProgress = 1;
+              nextOpening = false;
+              nextOpened = true;
+              
+              // Safe side-effect-free unboxing check (prevents double unboxing from Strict Mode)
+              if (!awardedBoxIdsRef.current.has(box.id)) {
+                awardedBoxIdsRef.current.add(box.id);
+                box.awarded = true;
+                if (box.itemType === 'battery') {
+                  rechargeBattery = true;
+                } else {
+                  itemsToAward.push({ type: box.itemType, label: box.itemLabel, description: box.itemDescription });
+                }
+              }
+              
+              if (!muted) {
+                sound.playUnlock();
+              }
+              
+              // Particles and texts
+              floatingTextsRef.current.push({
+                x: box.x,
+                y: 220,
+                text: box.itemType === 'battery' ? "FLASHLIGHT RECHARGED! ⚡" : `+1 ${box.itemLabel.toUpperCase()} 📦`,
+                color: "#10b981",
+                life: 130
+              });
+              
+              for (let i = 0; i < 15; i++) {
+                floatingTextsRef.current.push({
+                  x: box.x + (Math.random() - 0.5) * 30,
+                  y: box.targetY - Math.random() * 20,
+                  text: ["✨", "📦", "🎉", "★", "⚡"][Math.floor(Math.random() * 5)],
+                  color: ["#fbcfe8", "#fef08a", "#99f6e4", "#bfdbfe", "#fbbf24"][Math.floor(Math.random() * 5)],
+                  life: 40 + Math.floor(Math.random() * 30)
+                });
+              }
+            }
+            changed = true;
+          }
+          
+          if (nextY !== box.y || nextVy !== box.vy || nextScaleX !== box.scaleX || nextScaleY !== box.scaleY || nextProgress !== box.openProgress || nextOpening !== box.isOpening || nextOpened !== box.isOpened || nextBeam !== box.beamAlpha) {
+            changed = true;
+            return {
+              ...box,
+              y: nextY,
+              vy: nextVy,
+              scaleX: nextScaleX,
+              scaleY: nextScaleY,
+              openProgress: nextProgress,
+              isOpening: nextOpening,
+              isOpened: nextOpened,
+              beamAlpha: nextBeam
+            };
+          }
+          
+          return box;
+        });
+        
+        const filtered = next.filter(box => !box.isOpened);
+        if (filtered.length !== prev.length || changed) {
+          return filtered;
+        }
+        return prev;
+      });
+
+      // Apply the rewards safely OUTSIDE the state updater to avoid React side-effects
+      if (rechargeBattery) {
+        setFlashlightBattery(100);
+      }
+      itemsToAward.forEach(item => {
+        addToInventory(item.type, item.label, item.description);
+      });
+
+      // Update Drones animations and physics
+      setDrones(prevDrones => {
+        if (prevDrones.length === 0) return prevDrones;
+        let changed = false;
+        const nextDrones = prevDrones.map(drone => {
+          let nextX = drone.x;
+          let nextY = drone.y;
+          let nextState = drone.state;
+          let nextTimer = drone.timer;
+
+          if (nextState === 'FLYING_IN') {
+            const dx = drone.targetX - drone.x;
+            if (Math.abs(dx) > 4) {
+              nextX += Math.sign(dx) * 4.5;
+            } else {
+              nextX = drone.targetX;
+              nextState = 'HOVERING';
+            }
+            changed = true;
+          } else if (nextState === 'HOVERING') {
+            nextTimer -= 1;
+            if (nextTimer <= 0) {
+              nextState = 'DROPPING';
+            }
+            changed = true;
+          } else if (nextState === 'DROPPING') {
+            const newBox: AmazonBox = {
+              id: drone.boxId,
+              x: drone.targetX,
+              y: drone.y + 30, // Drop from where it was hanging
+              targetY: drone.targetY,
+              vy: 2.0,
+              scaleX: 1,
+              scaleY: 1,
+              itemType: drone.itemType,
+              itemLabel: drone.itemLabel,
+              itemDescription: drone.itemDescription,
+              isOpening: false,
+              isOpened: false,
+              openProgress: 0,
+              door: currentDoor,
+              beamAlpha: 1.0
+            };
+            setAmazonBoxes(prevBoxes => [...prevBoxes, newBox]);
+            if (!muted) sound.playClick();
+            nextState = 'FLYING_AWAY';
+            changed = true;
+          } else if (nextState === 'FLYING_AWAY') {
+            nextX += 5.5;
+            nextY -= 2.5;
+            changed = true;
+          }
+
+          return {
+            ...drone,
+            x: nextX,
+            y: nextY,
+            state: nextState,
+            timer: nextTimer
+          };
+        });
+
+        const filteredDrones = nextDrones.filter(d => d.state !== 'FLYING_AWAY' || d.x < 950);
+        if (filteredDrones.length !== prevDrones.length || changed) {
+          return filteredDrones;
+        }
+        return prevDrones;
+      });
 
       // Render loop
       draw();
@@ -2289,7 +2798,7 @@ export default function GameCanvas({
         }
 
         // Tiny search indicator arrow
-        if (!drawer.searched && Math.abs(playerPosition - drawer.x) < 45) {
+        if (!drawer.searched && Math.abs(playerPosition - drawer.x) < 75) {
           ctx.fillStyle = '#fbbf24';
           ctx.font = 'bold 8px monospace';
           ctx.textAlign = 'center';
@@ -2301,6 +2810,263 @@ export default function GameCanvas({
           ctx.closePath();
           ctx.fill();
         }
+      });
+
+      // Draw Amazon Boxes
+      amazonBoxes.forEach(box => {
+        if (box.door !== currentDoor) return;
+
+        ctx.save();
+        
+        // Wobble/shake when opening
+        let shakeX = 0;
+        let shakeY = 0;
+        if (box.isOpening) {
+          shakeX = (Math.random() - 0.5) * 4;
+          shakeY = (Math.random() - 0.5) * 2;
+        }
+
+        // Move coordinate system to bottom-center of the box for proper squash/stretch from ground
+        const boxBaseY = box.y + 14; // y is the center, box is 28px tall
+        ctx.translate(box.x + shakeX, boxBaseY + shakeY);
+        ctx.scale(box.scaleX, box.scaleY);
+
+        // Draw a light glowing beam shooting up to the sky (Amazon delivery portal!)
+        if (!box.isOpened && box.beamAlpha !== undefined && box.beamAlpha > 0.01) {
+          const grad = ctx.createLinearGradient(0, -14, 0, -250);
+          grad.addColorStop(0, `rgba(6, 182, 212, ${0.4 * box.beamAlpha})`);
+          grad.addColorStop(1, `rgba(6, 182, 212, 0)`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(-20, -250, 40, 236);
+        }
+
+        // Draw shadow under the box
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 18, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Standard Cardboard Brown body
+        // Box is centered on (0, -14) relative to translated base
+        const bW = 34;
+        const bH = 28;
+        const bX = -bW / 2;
+        const bY = -bH;
+
+        // Front face (cardboard base)
+        ctx.fillStyle = '#b45309'; // Rich Cardboard Brown
+        ctx.fillRect(bX, bY, bW, bH);
+
+        // Smile Logo (Amazon theme!)
+        ctx.strokeStyle = '#1e293b'; // Slate/black
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        // Draw the curved arrow (smile)
+        ctx.arc(0, bY + 16, 7, 0.2 * Math.PI, 0.8 * Math.PI);
+        ctx.stroke();
+        
+        // Smile arrow head
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.moveTo(4.5, bY + 18);
+        ctx.lineTo(8.5, bY + 18.5);
+        ctx.lineTo(7, bY + 15);
+        ctx.closePath();
+        ctx.fill();
+
+        // White shipping label
+        ctx.fillStyle = '#f8fafc'; // Crisp label
+        ctx.fillRect(-12, bY + 3, 7, 5);
+        ctx.fillStyle = '#475569'; // Tiny text lines on label
+        ctx.fillRect(-11, bY + 4, 5, 0.8);
+        ctx.fillRect(-11, bY + 6, 4, 0.8);
+
+        // Top sealing tape (dark brown)
+        ctx.fillStyle = '#451a03'; // Dark chocolate brown tape
+        ctx.fillRect(-3, bY, 6, bH);
+
+        // Draw Flaps (left and right)
+        // If progress is > 0, flaps tilt outwards
+        const progress = box.openProgress;
+        ctx.save();
+        ctx.fillStyle = '#ca8a04'; // Lighter flap interior/exterior
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#78350f';
+
+        // Left Flap
+        ctx.save();
+        ctx.translate(bX, bY);
+        const leftFlapAngle = -progress * Math.PI * 0.75; // tilts up to 135 degrees
+        ctx.rotate(leftFlapAngle);
+        ctx.fillRect(0, -2, bW / 2, 4);
+        ctx.strokeRect(0, -2, bW / 2, 4);
+        ctx.restore();
+
+        // Right Flap
+        ctx.save();
+        ctx.translate(bX + bW, bY);
+        const rightFlapAngle = progress * Math.PI * 0.75; // tilts up to 135 degrees
+        ctx.rotate(rightFlapAngle);
+        ctx.fillRect(-bW / 2, -2, bW / 2, 4);
+        ctx.strokeRect(-bW / 2, -2, bW / 2, 4);
+        ctx.restore();
+
+        ctx.restore();
+
+        // If open progress is high, draw the item emerging with a glow!
+        if (progress > 0.15) {
+          ctx.save();
+          const itemY = bY - (progress * 15);
+          
+          // Outer magical glow ring
+          ctx.strokeStyle = `rgba(34, 211, 238, ${progress})`;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.arc(0, itemY, 14, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Draw a small icon/shape representing the item!
+          ctx.fillStyle = '#22d3ee'; // Cyber cyan item placeholder
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          let itemEmoji = "🎁";
+          if (box.itemType === 'bandage') itemEmoji = "❤️";
+          else if (box.itemType === 'lockpick') itemEmoji = "🔑";
+          else if (box.itemType === 'cola') itemEmoji = "⚡";
+          else if (box.itemType === 'crucifix') itemEmoji = "✝️";
+          else if (box.itemType === 'radio') itemEmoji = "📻";
+          else if (box.itemType === 'battery') itemEmoji = "🔋";
+          else if (box.itemType === 'luck_potion') itemEmoji = "🍀";
+          else if (box.itemType === 'skeleton_key') itemEmoji = "🗝️";
+          else if (box.itemType === 'pendant') itemEmoji = "📿";
+          
+          ctx.fillText(itemEmoji, 0, itemY);
+          ctx.restore();
+        }
+
+        ctx.restore();
+
+        // Draw indicator prompts above the box (non-scaled)
+        const isNear = Math.abs(playerPosition - box.x) < 45;
+        ctx.textAlign = 'center';
+        
+        if (isNear) {
+          ctx.fillStyle = '#22d3ee'; // bright cyber cyan
+          ctx.font = 'bold 8px monospace';
+          ctx.fillText("TAP OR [E] TO UNBOX!", box.x, box.y - 25);
+          
+          // Tiny pulse chevron
+          const bounce = Math.sin(Date.now() / 150) * 3;
+          ctx.fillStyle = '#22d3ee';
+          ctx.beginPath();
+          ctx.moveTo(box.x, box.y - 14 + bounce);
+          ctx.lineTo(box.x - 3, box.y - 19 + bounce);
+          ctx.lineTo(box.x + 3, box.y - 19 + bounce);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#a1a1aa'; // zinc
+          ctx.font = 'bold 7px monospace';
+          ctx.fillText("AMAZON DELIVERY", box.x, box.y - 24);
+        }
+      });
+
+      // Draw Delivery Drones
+      drones.forEach(drone => {
+        ctx.save();
+        
+        const dx = drone.x;
+        const dy = drone.y;
+
+        // Draw hanging wire ropes if carrying the box
+        if (drone.state === 'FLYING_IN' || drone.state === 'HOVERING') {
+          ctx.strokeStyle = 'rgba(161, 161, 170, 0.6)'; // steel wire color
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(dx - 12, dy + 6);
+          ctx.lineTo(dx - 8, dy + 28);
+          ctx.moveTo(dx + 12, dy + 6);
+          ctx.lineTo(dx + 8, dy + 28);
+          ctx.stroke();
+
+          // Draw a mini preview of the hanging Amazon Box!
+          ctx.fillStyle = '#b45309'; // cardboard brown
+          ctx.fillRect(dx - 10, dy + 28, 20, 16);
+          ctx.fillStyle = '#1e293b'; // black/slate logo arc
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(dx, dy + 35, 3, 0.2 * Math.PI, 0.8 * Math.PI);
+          ctx.stroke();
+        }
+
+        // Draw Drone Chassis
+        ctx.fillStyle = '#18181b'; // Sleek dark zinc metal
+        ctx.beginPath();
+        ctx.roundRect(dx - 22, dy - 6, 44, 12, 4);
+        ctx.fill();
+
+        // Propeller Arms
+        ctx.strokeStyle = '#3f3f46'; // lighter zinc metal
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        // Top-left arm
+        ctx.moveTo(dx - 14, dy - 4);
+        ctx.lineTo(dx - 24, dy - 12);
+        // Top-right arm
+        ctx.moveTo(dx + 14, dy - 4);
+        ctx.lineTo(dx + 24, dy - 12);
+        ctx.stroke();
+
+        // Spinning Propellers (animated)
+        const rotation = (Date.now() / 35) % (Math.PI * 2);
+        ctx.strokeStyle = 'rgba(161, 161, 170, 0.7)'; // Propeller blades semi-transparent
+        ctx.lineWidth = 1.5;
+
+        // Left prop
+        ctx.save();
+        ctx.translate(dx - 24, dy - 12);
+        ctx.rotate(rotation);
+        ctx.beginPath();
+        ctx.moveTo(-10, 0);
+        ctx.lineTo(10, 0);
+        ctx.stroke();
+        ctx.restore();
+
+        // Right prop
+        ctx.save();
+        ctx.translate(dx + 24, dy - 12);
+        ctx.rotate(rotation + Math.PI / 2); // offset a bit
+        ctx.beginPath();
+        ctx.moveTo(-10, 0);
+        ctx.lineTo(10, 0);
+        ctx.stroke();
+        ctx.restore();
+
+        // Glowing cyan delivery camera/lens (looks futuristic and high tech!)
+        ctx.fillStyle = '#22d3ee';
+        ctx.beginPath();
+        ctx.arc(dx, dy + 4, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Flashing navigation status beacon (Red/Green blinking)
+        const blink = Math.floor(Date.now() / 250) % 2 === 0;
+        ctx.fillStyle = blink ? '#ef4444' : '#22c55e';
+        ctx.beginPath();
+        ctx.arc(dx - 12, dy - 6, 2, 0, Math.PI * 2);
+        ctx.arc(dx + 12, dy - 6, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Subtle thrust glow underneath propellers
+        const thrustGrad = ctx.createLinearGradient(0, 0, 0, 15);
+        thrustGrad.addColorStop(0, 'rgba(6, 182, 212, 0.3)');
+        thrustGrad.addColorStop(1, 'rgba(6, 182, 212, 0)');
+        ctx.fillStyle = thrustGrad;
+        ctx.fillRect(dx - 26, dy - 10, 4, 12);
+        ctx.fillRect(dx + 22, dy - 10, 4, 12);
+
+        ctx.restore();
       });
 
       // Draw Door 40: Friendly Shopkeeper Jeff Room
@@ -2823,81 +3589,155 @@ export default function GameCanvas({
         }
       }
 
-      // Draw Monster (Rush) - Custom styled terrifying meme wide-mouthed face
+      // Draw Monster (Rush / Ambush) - Custom styled terrifying wide-mouthed face
       if (monsterActive) {
         const mx = monsterX;
         const my = height - 170;
+        const isAmbush = activeMonsterType === 'AMBUSH';
 
-        // Smokey shadow trails
-        for (let j = 0; j < 5; j++) {
-          const shadowOffset = j * -26;
-          const size = 56 - j * 8;
-          ctx.fillStyle = `rgba(31, 41, 55, ${0.7 - j * 0.15})`; // black/grey smoke
+        if (isAmbush) {
+          // Ambush: Terrifying green ghost specter
+          // Smokey green shadow trails
+          for (let j = 0; j < 6; j++) {
+            const shadowOffset = j * -32 * ambushDirRef.current;
+            const size = 60 - j * 7;
+            ctx.fillStyle = `rgba(16, 185, 129, ${0.8 - j * 0.14})`; // Emerald green smoke trail
+            ctx.beginPath();
+            ctx.arc(mx + shadowOffset, my + Math.sin(Date.now() / 80 + j) * 8, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Core head
+          ctx.fillStyle = '#062016'; // Dark green-black base
           ctx.beginPath();
-          ctx.arc(mx + shadowOffset, my, size, 0, Math.PI * 2);
+          ctx.arc(mx, my, 52, 0, Math.PI * 2);
           ctx.fill();
-        }
+          ctx.strokeStyle = '#10b981'; // Bright lime border
+          ctx.lineWidth = 4;
+          ctx.stroke();
 
-        // Giant raw black/red outline sphere (Rush face canvas)
-        ctx.fillStyle = '#111827';
-        ctx.beginPath();
-        ctx.arc(mx, my, 48, 0, Math.PI*2);
-        ctx.fill();
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-
-        // Creepy Distorted Staring Eyes (MEME screamer style!)
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        // Huge wide hollow white eye circles
-        ctx.arc(mx - 15, my - 10, 11, 0, Math.PI * 2);
-        ctx.arc(mx + 15, my - 10, 11, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Tiny piercing black pupils
-        ctx.fillStyle = '#000000';
-        ctx.beginPath();
-        ctx.arc(mx - 15, my - 10, 3.5, 0, Math.PI * 2);
-        ctx.arc(mx + 15, my - 10, 3.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Distorted raw grinning black screaming mouth (wide outline)
-        ctx.fillStyle = '#030712';
-        ctx.beginPath();
-        ctx.ellipse(mx, my + 14, 28, 18, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-
-        // Sharp rows of white jagged fangs / teeth (Doors game style)
-        ctx.fillStyle = '#ffffff';
-        // Draw top teeth row
-        for (let t = 0; t < 5; t++) {
-          const tx = mx - 20 + t * 10;
+          // 4 Staring Creepy Multi-eyes
+          ctx.fillStyle = '#ecfdf5'; // Neon white-green eye sockets
           ctx.beginPath();
-          ctx.moveTo(tx, my + 4);
-          ctx.lineTo(tx + 4, my + 14);
-          ctx.lineTo(tx + 8, my + 4);
-          ctx.closePath();
+          ctx.arc(mx - 18, my - 16, 12, 0, Math.PI * 2); // Eye 1
+          ctx.arc(mx + 18, my - 16, 12, 0, Math.PI * 2); // Eye 2
+          ctx.arc(mx - 6, my - 28, 8, 0, Math.PI * 2);   // Eye 3
+          ctx.arc(mx + 6, my - 28, 8, 0, Math.PI * 2);   // Eye 4
           ctx.fill();
-        }
-        // Draw bottom teeth row
-        for (let t = 0; t < 5; t++) {
-          const tx = mx - 20 + t * 10;
-          ctx.beginPath();
-          ctx.moveTo(tx, my + 24);
-          ctx.lineTo(tx + 4, my + 15);
-          ctx.lineTo(tx + 8, my + 24);
-          ctx.closePath();
-          ctx.fill();
-        }
 
-        // Extra spooky glow effect
-        ctx.strokeStyle = '#f43f5e';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(mx - 54, my - 54, 108, 108);
+          // Creepy red pupils
+          ctx.fillStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.arc(mx - 18, my - 16, 4.5, 0, Math.PI * 2);
+          ctx.arc(mx + 18, my - 16, 4.5, 0, Math.PI * 2);
+          ctx.arc(mx - 6, my - 28, 3, 0, Math.PI * 2);
+          ctx.arc(mx + 6, my - 28, 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Slashed wide mouth
+          ctx.fillStyle = '#022c22';
+          ctx.beginPath();
+          ctx.ellipse(mx, my + 14, 34, 20, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#34d399';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+
+          // Dripping neon green fangs
+          ctx.fillStyle = '#10b981';
+          for (let t = 0; t < 7; t++) {
+            const tx = mx - 24 + t * 8;
+            ctx.beginPath();
+            ctx.moveTo(tx, my + 2);
+            ctx.lineTo(tx + 3, my + 15);
+            ctx.lineTo(tx + 6, my + 2);
+            ctx.closePath();
+            ctx.fill();
+          }
+          for (let t = 0; t < 7; t++) {
+            const tx = mx - 24 + t * 8;
+            ctx.beginPath();
+            ctx.moveTo(tx, my + 26);
+            ctx.lineTo(tx + 3, my + 13);
+            ctx.lineTo(tx + 6, my + 26);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Pulsing glow outlines
+          ctx.strokeStyle = '#059669';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(mx - 58, my - 58, 116, 116);
+        } else {
+          // Standard Rush styling (original)
+          // Smokey shadow trails
+          for (let j = 0; j < 5; j++) {
+            const shadowOffset = j * -26;
+            const size = 56 - j * 8;
+            ctx.fillStyle = `rgba(31, 41, 55, ${0.7 - j * 0.15})`; // black/grey smoke
+            ctx.beginPath();
+            ctx.arc(mx + shadowOffset, my, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Giant raw black/red outline sphere (Rush face canvas)
+          ctx.fillStyle = '#111827';
+          ctx.beginPath();
+          ctx.arc(mx, my, 48, 0, Math.PI*2);
+          ctx.fill();
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+
+          // Creepy Distorted Staring Eyes (MEME screamer style!)
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(mx - 15, my - 10, 11, 0, Math.PI * 2);
+          ctx.arc(mx + 15, my - 10, 11, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Tiny piercing black pupils
+          ctx.fillStyle = '#000000';
+          ctx.beginPath();
+          ctx.arc(mx - 15, my - 10, 3.5, 0, Math.PI * 2);
+          ctx.arc(mx + 15, my - 10, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Distorted raw grinning black screaming mouth (wide outline)
+          ctx.fillStyle = '#030712';
+          ctx.beginPath();
+          ctx.ellipse(mx, my + 14, 28, 18, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+
+          // Sharp rows of white jagged fangs / teeth (Doors game style)
+          ctx.fillStyle = '#ffffff';
+          for (let t = 0; t < 5; t++) {
+            const tx = mx - 20 + t * 10;
+            ctx.beginPath();
+            ctx.moveTo(tx, my + 4);
+            ctx.lineTo(tx + 4, my + 14);
+            ctx.lineTo(tx + 8, my + 4);
+            ctx.closePath();
+            ctx.fill();
+          }
+          for (let t = 0; t < 5; t++) {
+            const tx = mx - 20 + t * 10;
+            ctx.beginPath();
+            ctx.moveTo(tx, my + 24);
+            ctx.lineTo(tx + 4, my + 15);
+            ctx.lineTo(tx + 8, my + 24);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Extra spooky glow effect
+          ctx.strokeStyle = '#f43f5e';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(mx - 54, my - 54, 108, 108);
+        }
       }
 
       // Draw Crucifix Banishment Holy Animation
@@ -3008,7 +3848,7 @@ export default function GameCanvas({
       ctx.restore();
     };
 
-    update();
+    animationId = requestAnimationFrame(update);
 
     return () => {
       cancelAnimationFrame(animationId);
@@ -3042,7 +3882,11 @@ export default function GameCanvas({
     dupeActive,
     dupeDoors,
     isRoomKeyLocked,
-    hasRoomKey
+    hasRoomKey,
+    hasSkull,
+    skullX,
+    skullInteracted,
+    amazonBoxes
   ]);
 
   return (
@@ -3168,7 +4012,7 @@ export default function GameCanvas({
           {isFlickering && (
             <div className="flex items-center gap-1.5 bg-red-950/40 border border-red-800/60 px-2 py-0.5 rounded text-[9px] font-mono text-red-400 animate-pulse">
               <ShieldAlert size={10} />
-              RUSH INCOMING!
+              {activeMonsterType === 'AMBUSH' ? 'AMBUSH INCOMING!' : 'RUSH INCOMING!'}
             </div>
           )}
 
@@ -3285,6 +4129,19 @@ export default function GameCanvas({
         </AnimatePresence>
 
         {/* 2D HUD Overlays */}
+        {inventory[selectedItemIdx]?.type === 'radio' && (
+          <div className="absolute top-24 left-1/2 transform -translate-x-1/2 w-11/12 max-w-md bg-zinc-950/95 border-2 border-pink-500/60 p-4 rounded-xl shadow-2xl z-30 flex flex-col gap-2 backdrop-blur-sm pointer-events-none text-center">
+            <div className="flex items-center justify-center gap-2 text-pink-500 font-bold font-mono text-xs animate-pulse uppercase tracking-widest">
+              <Music className="text-pink-400 animate-bounce" size={14} />
+              <span>SIMULATING RADIO ENGINE</span>
+              <Music className="text-pink-400 animate-bounce" size={14} />
+            </div>
+            <p className="text-[11px] text-zinc-300 font-mono leading-relaxed italic">
+              "The heavy hotel air suddenly buzzes as you power on the retro dials. Bright red and teal equalizer waves dance across the vintage speaker mesh. The spooky, oppressive silence of the corridor is shattered as <span className="text-pink-400 font-bold not-italic">Spear of Justice (1).mp3</span> blasts out, filling the hallway with heroic determination!"
+            </p>
+          </div>
+        )}
+
         {isHiding && (
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center pointer-events-none select-none z-30">
             <motion.div
@@ -3305,8 +4162,18 @@ export default function GameCanvas({
           </div>
         )}
 
+        {/* Amazon box prompt overlay */}
+        {amazonBoxes.some(box => box.door === currentDoor && !box.isOpened && !box.isOpening && Math.abs(playerPosition - box.x) < 45) && (
+          <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 bg-zinc-950/90 border border-cyan-500/40 px-3 py-1.5 rounded-md flex items-center gap-2 z-10 shadow-lg pointer-events-none animate-pulse">
+            <ShoppingBag className="text-cyan-400" size={14} />
+            <span className="text-xs font-mono text-cyan-400 font-bold uppercase">
+              TAP OR PRESS SPACE/E TO OPEN DELIVERY BOX
+            </span>
+          </div>
+        )}
+
         {/* Drawers Prompt overlay */}
-        {drawers.some(d => !d.searched && Math.abs(playerPosition - d.x) < 45) && (
+        {drawers.some(d => !d.searched && Math.abs(playerPosition - d.x) < 75) && (
           <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 bg-zinc-950/90 border border-yellow-500/40 px-3 py-1.5 rounded-md flex items-center gap-2 z-10 shadow-lg pointer-events-none animate-pulse">
             <Search className="text-yellow-500" size={14} />
             <span className="text-xs font-mono text-yellow-500 font-bold uppercase">
@@ -3490,38 +4357,22 @@ export default function GameCanvas({
                   </button>
                 </div>
 
-                {/* 4. Battery Refill */}
+                {/* 4. Jeff's Lucky Pendant */}
                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
-                      <Power className="text-cyan-400" size={12} />
-                      Battery Refill
+                      <Sparkles className="text-pink-400" size={12} />
+                      Jeff's Lucky Pendant
                     </span>
                     <span className="text-[9px] font-mono text-zinc-500">
-                      Recharges your Flashlight battery to 100%.
+                      Protects passively from ONE fatal monster strike! Shatters upon use.
                     </span>
                   </div>
                   <button
-                    onClick={() => {
-                      if (coins < 25) {
-                        setAlertMessage("NOT ENOUGH COINS!");
-                        setTimeout(() => setAlertMessage(""), 2000);
-                        return;
-                      }
-                      setCoins(prev => prev - 25);
-                      setFlashlightBattery(100);
-                      if (!muted) sound.playCoin();
-                      floatingTextsRef.current.push({
-                        x: playerPosition,
-                        y: 200,
-                        text: "BATTERY RECHARGED!",
-                        color: "#06b6d4",
-                        life: 80
-                      });
-                    }}
+                    onClick={() => buyItem('pendant', 120, "Jeff's Pendant", "Protects passively from one fatal strike! Shatters on use.")}
                     className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
                   >
-                    25 COINS
+                    120 COINS
                   </button>
                 </div>
 
@@ -3544,22 +4395,22 @@ export default function GameCanvas({
                   </button>
                 </div>
 
-                {/* 6. Lockpick */}
+                {/* 6. Golden Skeleton Key */}
                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
-                      <Key className="text-amber-500" size={12} />
-                      Lockpick
+                      <Key className="text-purple-400 animate-pulse" size={12} />
+                      Golden Skeleton Key
                     </span>
                     <span className="text-[9px] font-mono text-zinc-500">
-                      Unlocks locked doors without keys/puzzles!
+                      Unlocks regular locked doors and chests repeatedly (not consumed).
                     </span>
                   </div>
                   <button
-                    onClick={() => buyItem('lockpick', 65, 'Lockpick', 'Instantly unlocks locked doors.')}
+                    onClick={() => buyItem('skeleton_key', 180, 'Skeleton Key', 'Unlocks regular doors/chests repeatedly (not consumed).')}
                     className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
                   >
-                    65 COINS
+                    180 COINS
                   </button>
                 </div>
 
@@ -3586,13 +4437,63 @@ export default function GameCanvas({
             exit={{ opacity: 0 }}
             className="absolute inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
           >
-            {/* iPad Chassis */}
-            <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-neutral-900 border-[10px] border-neutral-950 rounded-[24px] max-w-2xl w-full h-[450px] shadow-2xl flex flex-col overflow-hidden relative"
-            >
+            {/* iPad Wrapper with Top Close Button */}
+            <div className="relative max-w-2xl w-full flex flex-col items-center">
+              {/* 3 Arrows Close Button on top of iPad */}
+              <button
+                onClick={() => {
+                  setShowIpad(false);
+                  if (!muted) sound.playClick();
+                }}
+                className="mb-3.5 bg-neutral-950/90 border border-neutral-800 hover:border-red-500/50 text-neutral-400 hover:text-red-400 rounded-full px-4 py-2 flex items-center justify-center gap-2.5 shadow-[0_4px_20px_rgba(0,0,0,0.6)] cursor-pointer hover:scale-105 active:scale-95 transition-all group select-none z-50"
+                title="Close iPad"
+              >
+                <div className="flex items-center -space-x-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <motion.div
+                      key={`left-${i}`}
+                      animate={{ y: [0, 4, 0] }}
+                      transition={{
+                        duration: 1.2,
+                        repeat: Infinity,
+                        delay: i * 0.15,
+                        ease: "easeInOut"
+                      }}
+                    >
+                      <ChevronDown size={16} className="text-cyan-400 group-hover:text-red-400 transition-colors" />
+                    </motion.div>
+                  ))}
+                </div>
+                
+                <span className="text-[10px] font-mono font-extrabold tracking-widest text-zinc-300 group-hover:text-red-400 uppercase transition-colors">
+                  CLOSE IPAD
+                </span>
+
+                <div className="flex items-center -space-x-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <motion.div
+                      key={`right-${i}`}
+                      animate={{ y: [0, 4, 0] }}
+                      transition={{
+                        duration: 1.2,
+                        repeat: Infinity,
+                        delay: i * 0.15,
+                        ease: "easeInOut"
+                      }}
+                    >
+                      <ChevronDown size={16} className="text-cyan-400 group-hover:text-red-400 transition-colors" />
+                    </motion.div>
+                  ))}
+                </div>
+              </button>
+
+              {/* iPad Chassis */}
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-neutral-900 border-[10px] border-neutral-950 rounded-[24px] w-full h-[450px] shadow-2xl flex flex-col overflow-hidden relative"
+              >
               {/* iPad Camera lens indicator */}
               <div className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-1.5 bg-neutral-800 rounded-full z-10" />
 
@@ -3766,39 +4667,47 @@ export default function GameCanvas({
                                   </span>
                                   <button
                                     onClick={() => {
+                                      // Check if inventory + pending orders exceeds hotbar limit of 5
+                                      if (inventory.length + pendingOrdersRef.current.length >= 5) {
+                                        setAlertMessage("HOTBAR WILL BE FULL! CANNOT ORDER.");
+                                        setTimeout(() => setAlertMessage(""), 2500);
+                                        return;
+                                      }
+
                                       if (coins < item.price) {
                                         setAlertMessage("NOT ENOUGH COINS!");
                                         setTimeout(() => setAlertMessage(""), 2000);
                                         return;
                                       }
 
-                                      // Process purchase
-                                      let success = false;
-                                      if (item.id === 'battery') {
-                                        setCoins(prev => prev - item.price);
-                                        setFlashlightBattery(100);
-                                        success = true;
-                                      } else {
-                                        success = addToInventory(item.id as ItemType, item.id === 'bandage' ? 'Bandage' : item.name, item.description);
-                                        if (success) {
-                                          setCoins(prev => prev - item.price);
-                                        }
-                                      }
-
-                                      if (success) {
-                                        // Reduce stock in state
-                                        setIpadItems(prev =>
-                                          prev.map(p => (p.id === item.id ? { ...p, stock: p.stock - 1 } : p))
-                                        );
-                                        if (!muted) sound.playCoin();
-                                        floatingTextsRef.current.push({
-                                          x: playerPosition,
-                                          y: 200,
-                                          text: `BOUGHT ${item.name.toUpperCase()}!`,
-                                          color: "#10b981",
-                                          life: 100
-                                        });
-                                      }
+                                      // Process purchase (Queue for Drone Delivery on iPad close)
+                                      const boxId = Math.random().toString();
+                                      
+                                      pendingOrdersRef.current.push({
+                                        id: boxId,
+                                        type: item.id as ItemType,
+                                        label: item.id === 'bandage' ? 'Bandage' : item.name,
+                                        desc: item.description
+                                      });
+                                      
+                                      setCoins(prev => prev - item.price);
+                                      
+                                      // Reduce stock in state
+                                      setIpadItems(prev =>
+                                        prev.map(p => (p.id === item.id ? { ...p, stock: p.stock - 1 } : p))
+                                      );
+                                      if (!muted) sound.playCoin();
+                                      
+                                      floatingTextsRef.current.push({
+                                        x: playerPosition,
+                                        y: 200,
+                                        text: `ORDERED ${item.name.toUpperCase()}! 📦`,
+                                        color: "#06b6d4",
+                                        life: 100
+                                      });
+                                      
+                                      setAlertMessage(`ORDERED! DRONE SHIPS UPON EXIT.`);
+                                      setTimeout(() => setAlertMessage(""), 2500);
                                     }}
                                     className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[8px] font-bold py-0.5 px-2 rounded uppercase transition-colors flex items-center gap-0.5 focus:outline-none"
                                   >
@@ -3832,6 +4741,7 @@ export default function GameCanvas({
                 />
               </div>
             </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -3873,6 +4783,8 @@ export default function GameCanvas({
                     {item.type === 'cola' && <Sparkles size={16} className="text-amber-500" />}
                     {item.type === 'lockpick' && <Key size={16} className="text-yellow-500" />}
                     {item.type === 'luck_potion' && <Sparkles size={16} className="text-emerald-400 animate-pulse" />}
+                    {item.type === 'skeleton_key' && <Key size={16} className="text-purple-400 animate-pulse" />}
+                    {item.type === 'pendant' && <Sparkles size={16} className="text-pink-400" />}
                     <span className="text-[7.5px] font-mono text-zinc-300 font-bold truncate max-w-[50px] uppercase mt-1">
                       {item.label}
                     </span>
@@ -3894,7 +4806,7 @@ export default function GameCanvas({
               <span className="text-xs font-mono text-zinc-300">
                 <span className="text-yellow-500 font-bold uppercase">{inventory[selectedItemIdx].label}:</span> {inventory[selectedItemIdx].description}
               </span>
-              {(inventory[selectedItemIdx].type === 'bandage' || inventory[selectedItemIdx].type === 'cola' || inventory[selectedItemIdx].type === 'lockpick' || inventory[selectedItemIdx].type === 'ipad' || inventory[selectedItemIdx].type === 'luck_potion') && (
+              {(inventory[selectedItemIdx].type === 'bandage' || inventory[selectedItemIdx].type === 'cola' || inventory[selectedItemIdx].type === 'lockpick' || inventory[selectedItemIdx].type === 'ipad' || inventory[selectedItemIdx].type === 'luck_potion' || inventory[selectedItemIdx].type === 'skeleton_key') && (
                 <button
                   onClick={useActiveItem}
                   className="bg-yellow-950 hover:bg-yellow-900 border border-yellow-850 text-yellow-400 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer font-bold shrink-0 animate-pulse"
@@ -3904,6 +4816,7 @@ export default function GameCanvas({
                   {inventory[selectedItemIdx].type === 'lockpick' && "PRESS [Q] TO LOCKPICK"}
                   {inventory[selectedItemIdx].type === 'ipad' && "PRESS [Q] TO OPEN IPAD"}
                   {inventory[selectedItemIdx].type === 'luck_potion' && "PRESS [Q] TO DRINK"}
+                  {inventory[selectedItemIdx].type === 'skeleton_key' && "PRESS [Q] TO UNLOCK"}
                 </button>
               )}
             </div>
@@ -3957,13 +4870,13 @@ export default function GameCanvas({
               {isHiding ? 'EXIT CLOSET' : 'INTERACT [E]'}
             </button>
 
-            {(inventory[selectedItemIdx]?.type === 'bandage' || inventory[selectedItemIdx]?.type === 'cola' || inventory[selectedItemIdx]?.type === 'lockpick' || inventory[selectedItemIdx]?.type === 'ipad' || inventory[selectedItemIdx]?.type === 'luck_potion') && (
+            {(inventory[selectedItemIdx]?.type === 'bandage' || inventory[selectedItemIdx]?.type === 'cola' || inventory[selectedItemIdx]?.type === 'lockpick' || inventory[selectedItemIdx]?.type === 'ipad' || inventory[selectedItemIdx]?.type === 'luck_potion' || inventory[selectedItemIdx]?.type === 'skeleton_key') && (
               <button
                 onClick={useActiveItem}
                 className="px-4 h-12 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white font-mono text-xs font-bold tracking-wider uppercase rounded-lg shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer animate-pulse shrink-0"
               >
                 {inventory[selectedItemIdx]?.type === 'ipad' ? <ShoppingBag size={14} /> : <Heart size={14} fill="white" />}
-                {inventory[selectedItemIdx]?.type === 'bandage' ? 'HEAL' : inventory[selectedItemIdx]?.type === 'cola' ? 'DRINK' : inventory[selectedItemIdx]?.type === 'lockpick' ? 'LOCKPICK' : inventory[selectedItemIdx]?.type === 'ipad' ? 'OPEN IPAD' : 'DRINK LUCK'}
+                {inventory[selectedItemIdx]?.type === 'bandage' ? 'HEAL' : inventory[selectedItemIdx]?.type === 'cola' ? 'DRINK' : inventory[selectedItemIdx]?.type === 'lockpick' ? 'LOCKPICK' : inventory[selectedItemIdx]?.type === 'ipad' ? 'OPEN IPAD' : inventory[selectedItemIdx]?.type === 'skeleton_key' ? 'UNLOCK' : 'DRINK LUCK'}
               </button>
             )}
           </div>

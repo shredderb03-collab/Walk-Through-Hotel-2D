@@ -241,6 +241,68 @@ class SoundManager {
     osc.stop(this.ctx.currentTime + 0.3);
   }
 
+  playAmbushScream(durationSecs: number) {
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // A glitched, horrifying pulsating siren screech for Ambush
+    const carrier = this.ctx.createOscillator();
+    const modulator = this.ctx.createOscillator();
+    const modGain = this.ctx.createGain();
+    const mainGain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+
+    carrier.type = 'sawtooth';
+    // Frequency sweeps up and down erratically
+    carrier.frequency.setValueAtTime(180, now);
+    carrier.frequency.linearRampToValueAtTime(550, now + durationSecs * 0.3);
+    carrier.frequency.exponentialRampToValueAtTime(140, now + durationSecs * 0.7);
+    carrier.frequency.linearRampToValueAtTime(320, now + durationSecs);
+
+    // Fast modulator for a glitched / metallic vibrating effect (screech)
+    modulator.type = 'sawtooth';
+    modulator.frequency.setValueAtTime(80, now);
+    modulator.frequency.linearRampToValueAtTime(25, now + durationSecs);
+    modGain.gain.setValueAtTime(180, now);
+
+    modulator.connect(modGain);
+    modGain.connect(carrier.frequency);
+
+    // Filter to make it piercing
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.frequency.linearRampToValueAtTime(1600, now + durationSecs * 0.5);
+    filter.frequency.linearRampToValueAtTime(600, now + durationSecs);
+    filter.Q.setValueAtTime(1.5, now);
+
+    carrier.connect(filter);
+    filter.connect(mainGain);
+    mainGain.connect(this.ctx.destination);
+
+    // Fast tremolo modulation (pulsing amplitude)
+    const tremolo = this.ctx.createOscillator();
+    const tremoloGain = this.ctx.createGain();
+    tremolo.frequency.setValueAtTime(12, now); // 12Hz pulse
+    tremoloGain.gain.setValueAtTime(0.15, now);
+    tremolo.connect(tremoloGain);
+    tremoloGain.connect(mainGain.gain);
+
+    // Main gain envelope
+    mainGain.gain.setValueAtTime(0.01, now);
+    mainGain.gain.linearRampToValueAtTime(0.35, now + durationSecs * 0.25);
+    mainGain.gain.linearRampToValueAtTime(0.4, now + durationSecs * 0.65);
+    mainGain.gain.exponentialRampToValueAtTime(0.01, now + durationSecs);
+
+    carrier.start(now);
+    modulator.start(now);
+    tremolo.start(now);
+
+    carrier.stop(now + durationSecs);
+    modulator.stop(now + durationSecs);
+    tremolo.stop(now + durationSecs);
+  }
+
   playMonsterRush(durationSecs: number) {
     this.init();
     if (!this.ctx) return;

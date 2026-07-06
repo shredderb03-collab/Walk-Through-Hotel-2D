@@ -3,14 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Skull, Play, ShieldAlert, Key, Zap, Volume2, Gamepad2, Info, Laptop, Smartphone, ArrowRight } from 'lucide-react';
+import { Skull, Play, ShieldAlert, Key, Zap, Volume2, Gamepad2, Info, Laptop, Smartphone, ArrowRight, Lock, ArrowLeft, Music, Eye } from 'lucide-react';
 import { GameState, GameStats } from './types';
 import GameCanvas from './components/GameCanvas';
 import GameOverScreen from './components/GameOverScreen';
 import VictoryScreen from './components/VictoryScreen';
 import { sound } from './utils/audio';
+import HubBackground from './components/HubBackground';
+import DoorsThumbnail from './components/DoorsThumbnail';
 
 const INITIAL_STATS: GameStats = {
   doorsOpened: 1,
@@ -23,10 +25,62 @@ const INITIAL_STATS: GameStats = {
 };
 
 export default function App() {
+  const [viewMode, setViewMode] = useState<'HUB' | 'INTRO' | 'GAME'>('HUB');
   const [gameState, setGameState] = useState<GameState>('START');
   const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
   const [introStep, setIntroStep] = useState<'DEVICE_SELECT' | 'CONTROLS' | 'ORIGINAL'>('DEVICE_SELECT');
   const [selectedDevice, setSelectedDevice] = useState<'COMPUTER' | 'MOBILE'>('COMPUTER');
+
+  // Intro Cinematic States
+  const [introPercent, setIntroPercent] = useState(0);
+  const [introText, setIntroText] = useState("INITIALIZING COMPILING ENGINE...");
+
+  useEffect(() => {
+    if (viewMode !== 'INTRO') return;
+    
+    setIntroPercent(0);
+    setIntroText("INITIALIZING COMPILING ENGINE...");
+    sound.playFlicker();
+
+    const interval = setInterval(() => {
+      setIntroPercent(prev => {
+        const next = prev + 1;
+        if (next >= 100) {
+          clearInterval(interval);
+          setTimeout(() => {
+            setViewMode('GAME');
+            setGameState('START');
+            setIntroStep('DEVICE_SELECT');
+          }, 350);
+          return 100;
+        }
+
+        // Set descriptive messages along the way
+        if (next < 25) {
+          setIntroText("BOOTING CANVAS ENGINES...");
+        } else if (next < 50) {
+          setIntroText("COOL_85™ WATERMARK SECURED...");
+        } else if (next < 75) {
+          setIntroText("STABILIZING ENTITY_RUSH.AI...");
+        } else if (next < 95) {
+          setIntroText("CONNECTING AUDIO BUFFERS (Spear of Justice)...");
+        } else {
+          setIntroText("DOORS 2D PORTALS ALIGNED!");
+        }
+
+        return next;
+      });
+    }, 32); // ~3.2 seconds total duration
+
+    return () => clearInterval(interval);
+  }, [viewMode]);
+
+  const skipIntro = () => {
+    sound.playClick();
+    setViewMode('GAME');
+    setGameState('START');
+    setIntroStep('DEVICE_SELECT');
+  };
 
   const startGame = () => {
     sound.playClick();
@@ -61,10 +115,18 @@ export default function App() {
       timeStarted: Date.now(),
     });
     setGameState('PLAYING');
-  };
+  };  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (viewMode === 'INTRO' && e.key === 'Escape') {
+        skipIntro();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewMode]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-between selection:bg-red-600/30">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-between selection:bg-red-600/30 overflow-x-hidden relative">
       
       {/* Decorative top static effect or vignette */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(24,24,27,0.8)_0%,rgba(9,9,11,1)_100%)] pointer-events-none z-0" />
@@ -73,7 +135,244 @@ export default function App() {
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-4 max-w-4xl mx-auto w-full">
         
         <AnimatePresence mode="wait">
-          {gameState === 'START' && (
+          {viewMode === 'HUB' && (
+            <motion.div
+              key="hub"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="w-full flex flex-col items-center py-6 relative"
+            >
+              {/* Animated Background Canvas and Overlays */}
+              <HubBackground />
+              <div className="absolute inset-0 overflow-hidden pointer-events-none -z-10 rounded-2xl">
+                <div className="absolute inset-0 bg-radial-gradient from-emerald-500/5 via-transparent to-zinc-950" />
+                <div className="absolute inset-0 opacity-[0.05] bg-[linear-gradient(rgba(16,185,129,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.1)_1px,transparent_1px)] bg-[size:24px_24px]" />
+              </div>
+
+              {/* Title Section with Animated Cool_85™ */}
+              <div className="text-center mb-10 select-none z-10">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.1, duration: 0.8 }}
+                  className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-950/30 border border-emerald-500/30 rounded-full mb-3 text-emerald-400 font-mono text-[10px] tracking-widest uppercase shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  CREATOR HUB ACTIVE
+                </motion.div>
+
+                <motion.h1
+                  animate={{
+                    textShadow: [
+                      "0 0 5px rgba(16,185,129,0.2)",
+                      "0 0 20px rgba(16,185,129,0.7)",
+                      "0 0 5px rgba(16,185,129,0.2)"
+                    ],
+                    scale: [1, 1.02, 1]
+                  }}
+                  transition={{
+                    duration: 3,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                  className="text-4xl md:text-6xl font-mono text-white font-extrabold tracking-widest uppercase relative bg-clip-text select-none cursor-default"
+                >
+                  COOL_85<span className="text-emerald-500 font-black">™</span>
+                </motion.h1>
+                <p className="text-zinc-500 font-mono text-xs tracking-widest uppercase mt-2">
+                  Official Games & Concept Portfolio
+                </p>
+              </div>
+
+              {/* Games Category Container */}
+              <div className="w-full max-w-3xl">
+                <div className="flex items-center gap-2.5 mb-6 border-b border-zinc-800/80 pb-3">
+                  <Gamepad2 className="text-emerald-500" size={20} />
+                  <h2 className="text-sm font-mono text-zinc-300 font-bold uppercase tracking-widest">
+                    Games Category
+                  </h2>
+                  <span className="ml-auto text-[10px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800/80 px-2 py-0.5 rounded">
+                    1 DEPLOYED
+                  </span>
+                </div>
+
+                {/* Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                  
+                  {/* GAME 1: DOORS 2D */}
+                  <motion.div
+                    whileHover={{ y: -4, borderColor: "rgba(16, 185, 129, 0.4)" }}
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                    className="bg-zinc-900/45 border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between shadow-xl backdrop-blur-sm relative overflow-hidden group transition-all"
+                  >
+                    {/* Custom Animated Teaser Thumbnail */}
+                    <DoorsThumbnail />
+
+                    {/* Metadata & Description */}
+                    <div>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <h3 className="text-lg font-mono font-extrabold text-white uppercase group-hover:text-emerald-400 transition-colors">
+                          Doors 2D
+                        </h3>
+                        <span className="text-[9px] font-mono text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded bg-emerald-950/10">
+                          Active
+                        </span>
+                      </div>
+                      <p className="text-zinc-400 font-mono text-[11px] leading-relaxed mb-6">
+                        Navigate a chilling, 2D scrolling hotel corridor of 100 doors. Wire circuit fuses, search retro drawers for keys, hide in dark closets, and survive the terrifying rush of monsters.
+                      </p>
+                    </div>
+
+                    {/* Launch button */}
+                    <button
+                      onClick={() => {
+                        sound.playClick();
+                        setViewMode('INTRO');
+                      }}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-zinc-950 font-mono font-bold text-xs tracking-wider uppercase py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_4px_12px_rgba(16,185,129,0.15)] group-hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)]"
+                    >
+                      <Play size={12} fill="black" />
+                      Launch Doors 2D
+                    </button>
+                  </motion.div>
+
+                  {/* LOCKED GAME SLOT */}
+                  <div className="bg-zinc-900/15 border border-zinc-800/40 border-dashed rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden select-none opacity-60">
+                    <div className="relative w-full h-44 bg-zinc-950/20 rounded-xl border border-zinc-800/30 border-dashed flex flex-col items-center justify-center text-zinc-650 gap-2 mb-4">
+                      <Lock size={24} className="opacity-30" />
+                      <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                        SLOT UNASSIGNED
+                      </span>
+                    </div>
+
+                    <div>
+                      <h3 className="text-base font-mono font-bold text-zinc-650 uppercase mb-1.5">
+                        Project: Classified
+                      </h3>
+                      <p className="text-zinc-650 font-mono text-[11px] leading-relaxed mb-6">
+                        Cool_85™ has not authorized any secondary games on this server yet. Stay tuned as more immersive gameplay experiences are developed.
+                      </p>
+                    </div>
+
+                    <button
+                      disabled
+                      className="w-full bg-zinc-900/50 border border-zinc-800 text-zinc-600 font-mono font-bold text-xs tracking-wider uppercase py-3 px-4 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed"
+                    >
+                      Locked
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Developer Watermark Note */}
+              <div className="mt-14 border border-zinc-800/50 rounded-xl py-3.5 px-6 bg-zinc-900/10 backdrop-blur-md flex flex-col gap-1.5 items-center select-none text-center">
+                <span className="font-mono text-[9.5px] text-zinc-500 uppercase tracking-[0.2em] block">
+                  DEVELOPED BY THE ONE AND ONLY • <span className="text-emerald-500 font-extrabold">COOL_85™</span>
+                </span>
+                <span className="font-mono text-[9.5px] text-zinc-400 uppercase tracking-[0.2em] block">
+                  PRODUCED BY • <span className="text-emerald-400 font-extrabold tracking-[0.25em]">THEODORE PRODUCTIONS</span>
+                </span>
+              </div>
+            </motion.div>
+          )}
+
+          {viewMode === 'INTRO' && (
+            <motion.div
+              key="intro"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="w-full max-w-xl text-center flex flex-col items-center p-8 bg-black border border-zinc-900 rounded-2xl shadow-2xl relative overflow-hidden"
+            >
+              {/* Cinematic projector background scanlines */}
+              <div className="absolute inset-0 bg-[linear-gradient(rgba(18,18,18,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] bg-[size:100%_4px,3px_100%] pointer-events-none" />
+
+              {/* Skip Intro button */}
+              <button
+                onClick={skipIntro}
+                className="absolute top-4 right-4 text-[9px] font-mono text-zinc-500 hover:text-white border border-zinc-800 hover:border-zinc-500 bg-zinc-950 px-2 py-1 rounded transition-all cursor-pointer uppercase z-30"
+              >
+                Skip Intro [ESC]
+              </button>
+
+              <div className="my-12 flex flex-col items-center select-none">
+                <motion.span
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: [0, 1, 1, 0.8, 1] }}
+                  transition={{ duration: 1.5, ease: "easeOut" }}
+                  className="text-[10px] font-mono text-zinc-500 uppercase tracking-[0.4em] block mb-3 font-bold"
+                >
+                  A PRODUCTION BY
+                </motion.span>
+
+                {/* WATERMARK EMBLEM */}
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: "spring", stiffness: 80, delay: 0.3 }}
+                  className="relative px-8 py-4 border-2 border-dashed border-emerald-500/20 rounded-xl bg-emerald-950/5 shadow-[0_0_20px_rgba(16,185,129,0.05)]"
+                >
+                  <motion.h2
+                    animate={{
+                      textShadow: [
+                        "0 0 5px rgba(16,185,129,0.3)",
+                        "0 0 25px rgba(16,185,129,0.85)",
+                        "0 0 5px rgba(16,185,129,0.3)"
+                      ],
+                      scale: [1, 1.03, 1]
+                    }}
+                    transition={{
+                      duration: 2.5,
+                      repeat: Infinity,
+                      ease: "easeInOut"
+                    }}
+                    className="text-3xl md:text-5xl font-mono text-white font-extrabold tracking-[0.3em] uppercase bg-clip-text bg-gradient-to-r from-emerald-400 via-white to-teal-400 select-none cursor-default"
+                  >
+                    COOL_85™
+                  </motion.h2>
+                  <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-emerald-500/60 rounded-full animate-ping" />
+                </motion.div>
+
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.8 }}
+                  className="text-[9px] font-mono text-emerald-400 uppercase tracking-[0.3em] block mt-4 font-bold"
+                >
+                  ★ WATERMARK CONFIRMED ★
+                </motion.span>
+              </div>
+
+              {/* Interactive Loading Feed */}
+              <div className="w-full max-w-sm flex flex-col gap-2 mt-4 text-left font-mono text-[10px]">
+                <div className="flex justify-between text-zinc-500 border-b border-zinc-900 pb-1">
+                  <span>SYSTEM FEED:</span>
+                  <span className="text-emerald-500 animate-pulse">RUNNING</span>
+                </div>
+                
+                <div className="text-zinc-400 flex items-center justify-between">
+                  <span className="uppercase text-[9.5px] tracking-wider truncate mr-2">{introText}</span>
+                  <span className="text-emerald-400 font-bold ml-auto shrink-0">{introPercent}%</span>
+                </div>
+
+                {/* Modern Progress Bar */}
+                <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400"
+                    style={{ width: `${introPercent}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="text-[9px] font-mono text-zinc-600 uppercase mt-8 select-none">
+                LOADING SECURE SANDBOX ENVIRONMENTS
+              </div>
+            </motion.div>
+          )}
+
+          {viewMode === 'GAME' && gameState === 'START' && (
             <motion.div
               key="start"
               initial={{ opacity: 0, y: 20 }}
@@ -81,11 +380,23 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="w-full max-w-xl text-center flex flex-col items-center p-6 bg-zinc-900/60 border border-zinc-800/80 rounded-2xl shadow-2xl backdrop-blur-md relative overflow-hidden"
             >
+              {/* Back to Hub Button */}
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  setViewMode('HUB');
+                }}
+                className="absolute top-4 left-4 flex items-center gap-1 text-[10px] font-mono text-zinc-500 hover:text-emerald-400 uppercase transition-all bg-zinc-950/50 border border-zinc-850 px-2 py-1 rounded cursor-pointer group z-20"
+              >
+                <ArrowLeft size={10} className="group-hover:-translate-x-0.5 transition-transform" />
+                Return to Hub
+              </button>
+
               {/* Caution stripe background headers */}
               <div className="absolute top-0 left-0 right-0 h-3 bg-gradient-to-r from-yellow-500 via-zinc-800 to-yellow-500 bg-[length:40px_100%] opacity-40" />
 
               {/* Creepy pulsating warning icon and Theodore Productions */}
-              <div className="flex items-center gap-4 mb-6 select-none">
+              <div className="flex items-center gap-4 mb-6 mt-6 select-none">
                 <motion.div
                   animate={{ scale: [1, 1.1, 1] }}
                   transition={{ repeat: Infinity, duration: 2.0, ease: "easeInOut" }}
@@ -202,7 +513,7 @@ export default function App() {
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="flex flex-col items-center w-full mt-6 animate-none"
+                  className="flex flex-col items-center w-full mt-6"
                 >
                   <span className="text-xs font-mono font-bold text-red-500 uppercase tracking-widest mb-3">💻 KEYBOARD CONTROLS</span>
                   <div className="w-full max-w-md bg-zinc-950/70 border border-zinc-800 rounded-xl p-4 text-left font-mono text-[11px] text-zinc-300 flex flex-col gap-2 shadow-inner">
@@ -313,7 +624,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {gameState === 'PLAYING' && (
+          {viewMode === 'GAME' && gameState === 'PLAYING' && (
             <motion.div
               key="playing"
               initial={{ opacity: 0 }}
@@ -333,7 +644,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {gameState === 'GAMEOVER' && (
+          {viewMode === 'GAME' && gameState === 'GAMEOVER' && (
             <motion.div
               key="gameover"
               initial={{ opacity: 0 }}
@@ -345,10 +656,23 @@ export default function App() {
                 stats={stats}
                 onRestart={restartGame}
               />
+              
+              {/* Return to Hub trigger */}
+              <div className="mt-4 text-center">
+                <button
+                  onClick={() => {
+                    sound.playClick();
+                    setViewMode('HUB');
+                  }}
+                  className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white px-4 py-2 rounded font-mono text-xs uppercase cursor-pointer transition-all"
+                >
+                  ← Return to Cool_85™ Hub
+                </button>
+              </div>
             </motion.div>
           )}
 
-          {gameState === 'VICTORY' && (
+          {viewMode === 'GAME' && gameState === 'VICTORY' && (
             <motion.div
               key="victory"
               initial={{ opacity: 0 }}
@@ -360,6 +684,19 @@ export default function App() {
                 stats={stats}
                 onRestart={restartGame}
               />
+
+              {/* Return to Hub trigger */}
+              <div className="mt-4 text-center">
+                <button
+                  onClick={() => {
+                    sound.playClick();
+                    setViewMode('HUB');
+                  }}
+                  className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white px-4 py-2 rounded font-mono text-xs uppercase cursor-pointer transition-all"
+                >
+                  ← Return to Cool_85™ Hub
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -368,7 +705,7 @@ export default function App() {
 
       {/* Humble, literal footer credit */}
       <footer className="relative z-10 py-6 text-center text-[9px] font-mono text-zinc-600 uppercase tracking-widest border-t border-zinc-900/40 select-none bg-zinc-950/20">
-        DOORS 2D HORROR • PRESS KEYBOARD OR USE ON-SCREEN TOUCH ARROWS
+        COOL_85™ PLATFORM • PRESS KEYBOARD OR USE ON-SCREEN TOUCH ARROWS
       </footer>
     </div>
   );
