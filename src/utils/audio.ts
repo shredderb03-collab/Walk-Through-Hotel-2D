@@ -8,6 +8,22 @@ class SoundManager {
   private ambianceOsc: OscillatorNode | null = null;
   private ambianceGain: GainNode | null = null;
 
+  constructor() {
+    if (typeof window !== 'undefined') {
+      const resumeAudio = () => {
+        this.init();
+        if (this.ctx && this.ctx.state === 'running') {
+          window.removeEventListener('touchstart', resumeAudio);
+          window.removeEventListener('mousedown', resumeAudio);
+          window.removeEventListener('click', resumeAudio);
+        }
+      };
+      window.addEventListener('touchstart', resumeAudio, { passive: true });
+      window.addEventListener('mousedown', resumeAudio, { passive: true });
+      window.addEventListener('click', resumeAudio, { passive: true });
+    }
+  }
+
   private init() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;

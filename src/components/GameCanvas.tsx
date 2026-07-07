@@ -363,6 +363,7 @@ export default function GameCanvas({
   const mutedRef = useRef(muted);
   const handleInteractionRef = useRef<() => void>(() => {});
   const useActiveItemRef = useRef<() => void>(() => {});
+  const toggleFlashlightRef = useRef<() => void>(() => {});
 
   // Determine if a room should be locked / have a puzzle
   // Locked doors at doors: 18 (Key 1), 36 (Key 2), 54 (Key 3), 72 (Key 4), 90 (Key 5)
@@ -994,21 +995,7 @@ export default function GameCanvas({
 
       // Flashlight Toggle
       if (code === 'KeyF') {
-        const hasFlashlight = inventoryRef.current.some(item => item.type === 'flashlight');
-        const isHoldingFlashlight = inventoryRef.current[selectedItemIdxRef.current]?.type === 'flashlight';
-        if (!hasFlashlight) {
-          setAlertMessage("YOU DO NOT HAVE A FLASHLIGHT!");
-          setTimeout(() => setAlertMessage(""), 2000);
-        } else if (!isHoldingFlashlight) {
-          setAlertMessage("EQUIP FLASHLIGHT IN HOTBAR!");
-          setTimeout(() => setAlertMessage(""), 2000);
-        } else if (flashlightBatteryRef.current <= 0) {
-          setAlertMessage("FLASHLIGHT BATTERY IS DEAD!");
-          setTimeout(() => setAlertMessage(""), 2000);
-        } else {
-          setFlashlightOn(prev => !prev);
-          sound.playClick();
-        }
+        toggleFlashlightRef.current();
       }
 
       // Quick use / Consume active item [KeyQ or click]
@@ -1028,6 +1015,25 @@ export default function GameCanvas({
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, []);
+
+  // Flashlight Toggle Helper
+  const toggleFlashlight = () => {
+    const hasFlashlight = inventory.some(item => item.type === 'flashlight');
+    const isHoldingFlashlight = inventory[selectedItemIdx]?.type === 'flashlight';
+    if (!hasFlashlight) {
+      setAlertMessage("YOU DO NOT HAVE A FLASHLIGHT!");
+      setTimeout(() => setAlertMessage(""), 2000);
+    } else if (!isHoldingFlashlight) {
+      setAlertMessage("EQUIP FLASHLIGHT IN HOTBAR!");
+      setTimeout(() => setAlertMessage(""), 2000);
+    } else if (flashlightBattery <= 0) {
+      setAlertMessage("FLASHLIGHT BATTERY IS DEAD!");
+      setTimeout(() => setAlertMessage(""), 2000);
+    } else {
+      setFlashlightOn(prev => !prev);
+      if (!muted) sound.playClick();
+    }
+  };
 
   // Consume / Use active item helper
   const useActiveItem = () => {
@@ -1548,6 +1554,7 @@ export default function GameCanvas({
   mutedRef.current = muted;
   handleInteractionRef.current = handleInteraction;
   useActiveItemRef.current = useActiveItem;
+  toggleFlashlightRef.current = toggleFlashlight;
 
   // Buy Item from Shop Counter
   const buyItem = (type: ItemType, cost: number, label: string, desc: string) => {
@@ -1648,236 +1655,6 @@ export default function GameCanvas({
           setStats(prev => ({ ...prev, doorsOpened: nextDoor }));
           if (!muted) sound.playUnlock();
           initRoom(nextDoor);
-        }
-
-        // Proximity Auto-Interactions (seamless high-speed looting & unboxing)
-        // A. Skull Proximity Auto-Crush
-        if (hasSkull && !skullInteractedRef.current && !inSideRoom && Math.abs(playerPosition - skullX) < 40) {
-          skullInteractedRef.current = true;
-          setSkullInteracted(true);
-          setCoins(prev => prev + 4);
-          triggerCoinAnimation(4, skullX);
-          if (!muted) sound.playCoin();
-          floatingTextsRef.current.push({
-            x: skullX,
-            y: 200,
-            text: "+4 COINS (CRUSHED SKULL) 💀",
-            color: "#fbbf24",
-            life: 110
-          });
-          setAlertMessage("YOU AUTO-CRUSHED THE SKULL AND FOUND 4 COINS!");
-          setTimeout(() => setAlertMessage(""), 3000);
-        }
-
-        // B. Amazon Box Proximity Auto-Unboxing
-        const nearBox = amazonBoxes.find(box => box.door === currentDoor && !box.isOpened && !box.isOpening && Math.abs(playerPosition - box.x) < 45);
-        if (nearBox) {
-          if (nearBox.itemType !== 'battery' && inventory.length >= 5) {
-            if (Date.now() - lastBoxWarningTimeRef.current > 2500) {
-              setAlertMessage("HOTBAR FULL! MAKE SPACE IN YOUR INVENTORY.");
-              setTimeout(() => setAlertMessage(""), 2000);
-              lastBoxWarningTimeRef.current = Date.now();
-            }
-          } else {
-            if (!openingBoxIdsRef.current.has(nearBox.id)) {
-              openingBoxIdsRef.current.add(nearBox.id);
-              setAmazonBoxes(prev => prev.map(b => b.id === nearBox.id ? { ...b, isOpening: true } : b));
-              if (!muted) sound.playUnlock();
-              floatingTextsRef.current.push({
-                x: nearBox.x,
-                y: 220,
-                text: `UNBOXING... 📦`,
-                color: "#fbbf24",
-                life: 60
-              });
-            }
-          }
-        }
-
-        // C. Drawer Proximity Auto-Searching
-        const nearAutoDrawer = !inSideRoom ? drawers.find(d => !d.searched && Math.abs(playerPosition - d.x) < 45) : undefined;
-        if (nearAutoDrawer) {
-          nearAutoDrawer.searched = true;
-          setDrawers([...drawers]);
-
-          if (nearAutoDrawer.hasKey) {
-            setHasRoomKey(true);
-            setIsDoorLocked(false);
-            if (!muted) sound.playKey();
-            floatingTextsRef.current.push({
-              x: nearAutoDrawer.x,
-              y: 200,
-              text: "ROOM KEY 🔑",
-              color: "#fbbf24",
-              life: 110
-            });
-            setAlertMessage("YOU AUTO-FOUND THE ROOM KEY! DOOR UNLOCKED.");
-            setTimeout(() => setAlertMessage(""), 3000);
-          } else if (hasSideRoom && nearAutoDrawer.hasCode) {
-            setSideRoomCodeFound(true);
-            if (!muted) sound.playKey();
-            floatingTextsRef.current.push({
-              x: nearAutoDrawer.x,
-              y: 200,
-              text: `CODE: ${sideRoomCode} 📝`,
-              color: "#10b981",
-              life: 140
-            });
-            setAlertMessage(`AUTO-FOUND CHEST SCROLL: CODE IS ${sideRoomCode}`);
-            setTimeout(() => setAlertMessage(""), 4500);
-          } else {
-            // Roll drop percentage
-            const roll = Math.random();
-            const hasLuck = luckPotionTimerRef.current > 0;
-            const luckMultiplier = hasLuck ? 1.3 : 1.0;
-
-            // iPad has 0.9% base drop chance
-            const ipadChance = 0.009 * luckMultiplier;
-            // Luck Potion has 4.3% base drop chance
-            const luckPotionChance = 0.043 * luckMultiplier;
-
-            if (roll < ipadChance) {
-              const success = addToInventory('ipad', 'iPad', 'Sleek electronic tablet. Open Jeff Express to buy items.');
-              if (success) {
-                if (!muted) sound.playKey();
-                floatingTextsRef.current.push({
-                  x: nearAutoDrawer.x,
-                  y: 200,
-                  text: "FOUND IPAD! 📱",
-                  color: "#a855f7",
-                  life: 120
-                });
-                setAlertMessage("YOU AUTO-FOUND AN IPAD! EQUIP IT AND PRESS Q OR TAP USE TO OPEN THE SHOP!");
-                setTimeout(() => setAlertMessage(""), 4500);
-              }
-            } else if (roll < ipadChance + luckPotionChance) {
-              const success = addToInventory('luck_potion', 'Luck Potion', 'Boosts rare drops/stock by +30% for 44s. Press Q to drink.');
-              if (success) {
-                if (!muted) sound.playHeal();
-                floatingTextsRef.current.push({
-                  x: nearAutoDrawer.x,
-                  y: 200,
-                  text: "FOUND LUCK POTION! 🍀",
-                  color: "#10b981",
-                  life: 120
-                });
-                setAlertMessage("YOU AUTO-FOUND A LUCK POTION! DRINK IT [Q] TO BOOST YOUR LUCK BY 30%!");
-                setTimeout(() => setAlertMessage(""), 4500);
-              }
-            } else {
-              // Normal drops
-              const normalRoll = Math.random();
-              const baseCrucifixChance = 0.03;
-              const crucifixChance = baseCrucifixChance * luckMultiplier; // 3% * 1.3 = 3.9%
-
-              const baseColaChance = 0.10;
-              const colaChance = baseColaChance * luckMultiplier; // 10% * 1.3 = 13%
-
-              const baseCoins55Chance = 0.08;
-              const coins55Chance = baseCoins55Chance * luckMultiplier; // 8% * 1.3 = 10.4%
-
-              const baseBandageChance = 0.12;
-              const baseBatteryChance = 0.10;
-              const baseCoins20Chance = 0.20;
-
-              let cumulative = 0;
-
-              cumulative += crucifixChance;
-              if (normalRoll < cumulative) {
-                const success = addToInventory('crucifix', 'Crucifix', 'Banish Rush. Equip to protect.');
-                if (success) {
-                  if (!muted) sound.playKey();
-                  floatingTextsRef.current.push({
-                    x: nearAutoDrawer.x,
-                    y: 200,
-                    text: "FOUND CRUCIFIX!",
-                    color: "#3b82f6",
-                    life: 90
-                  });
-                }
-              } else {
-                cumulative += coins55Chance;
-                if (normalRoll < cumulative) {
-                  setCoins(prev => prev + 55);
-                  triggerCoinAnimation(55, nearAutoDrawer.x);
-                  if (!muted) sound.playCoin();
-                  floatingTextsRef.current.push({
-                    x: nearAutoDrawer.x,
-                    y: 200,
-                    text: "+55 COINS!",
-                    color: "#fbbf24",
-                    life: 90
-                  });
-                } else {
-                  cumulative += colaChance;
-                  if (normalRoll < cumulative) {
-                    const success = addToInventory('cola', 'Speed Cola', 'Incredible speed & infinite stamina for 11s. Press Q to drink.');
-                    if (success) {
-                      if (!muted) sound.playHeal();
-                      floatingTextsRef.current.push({
-                        x: nearAutoDrawer.x,
-                        y: 200,
-                        text: "FOUND SPEED COLA! ⚡",
-                        color: "#fbbf24",
-                        life: 110
-                      });
-                    }
-                  } else {
-                    cumulative += baseBandageChance;
-                    if (normalRoll < cumulative) {
-                      const success = addToInventory('bandage', 'Bandage', 'Heals 40 Health. Press Q to use.');
-                      if (success) {
-                        if (!muted) sound.playHeal();
-                        floatingTextsRef.current.push({
-                          x: nearAutoDrawer.x,
-                          y: 200,
-                          text: "FOUND BANDAGE",
-                          color: "#10b981",
-                          life: 90
-                        });
-                      }
-                    } else {
-                      cumulative += baseBatteryChance;
-                      if (normalRoll < cumulative) {
-                        setFlashlightBattery(prev => Math.min(100, prev + 50));
-                        if (!muted) sound.playKey();
-                        floatingTextsRef.current.push({
-                          x: nearAutoDrawer.x,
-                          y: 200,
-                          text: "+50% BATTERY!",
-                          color: "#06b6d4",
-                          life: 90
-                        });
-                      } else {
-                        cumulative += baseCoins20Chance;
-                        if (normalRoll < cumulative) {
-                          setCoins(prev => prev + 20);
-                          triggerCoinAnimation(20, nearAutoDrawer.x);
-                          if (!muted) sound.playCoin();
-                          floatingTextsRef.current.push({
-                            x: nearAutoDrawer.x,
-                            y: 200,
-                            text: "+20 COINS",
-                            color: "#fbbf24",
-                            life: 90
-                          });
-                        } else {
-                          if (!muted) sound.playClick();
-                          floatingTextsRef.current.push({
-                            x: nearAutoDrawer.x,
-                            y: 200,
-                            text: "EMPTY",
-                            color: "#6b7280",
-                            life: 80
-                          });
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
         }
       }
 
@@ -4944,11 +4721,16 @@ export default function GameCanvas({
             return (
               <div
                 key={idx}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  sound.playClick();
+                  setSelectedItemIdx(idx);
+                }}
                 onClick={() => {
                   sound.playClick();
                   setSelectedItemIdx(idx);
                 }}
-                className={`w-14 h-14 rounded-lg bg-zinc-900 border flex flex-col items-center justify-center relative cursor-pointer select-none transition-all ${
+                className={`w-14 h-14 rounded-lg bg-zinc-900 border flex flex-col items-center justify-center relative cursor-pointer select-none transition-all touch-none ${
                   isSelected 
                     ? 'border-yellow-500 shadow-[0_0_12px_rgba(234,179,8,0.25)] bg-zinc-850 scale-105' 
                     : 'border-zinc-800 hover:border-zinc-700'
@@ -4961,7 +4743,7 @@ export default function GameCanvas({
                 </span>
 
                 {item ? (
-                  <div className="flex flex-col items-center justify-center">
+                  <div className="flex flex-col items-center justify-center pointer-events-none">
                     {item.type === 'bandage' && <Heart size={16} className="text-red-500 fill-red-500/15" />}
                     {item.type === 'crucifix' && <Sparkles size={16} className="text-yellow-400" />}
                     {item.type === 'radio' && <Music size={16} className="text-cyan-400" />}
@@ -4976,7 +4758,7 @@ export default function GameCanvas({
                     </span>
                   </div>
                 ) : (
-                  <span className="text-[9px] font-mono text-zinc-700 uppercase">
+                  <span className="text-[9px] font-mono text-zinc-700 uppercase pointer-events-none">
                     EMPTY
                   </span>
                 )}
@@ -4994,8 +4776,12 @@ export default function GameCanvas({
               </span>
               {(inventory[selectedItemIdx].type === 'bandage' || inventory[selectedItemIdx].type === 'cola' || inventory[selectedItemIdx].type === 'lockpick' || inventory[selectedItemIdx].type === 'ipad' || inventory[selectedItemIdx].type === 'luck_potion' || inventory[selectedItemIdx].type === 'skeleton_key') && (
                 <button
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    useActiveItem();
+                  }}
                   onClick={useActiveItem}
-                  className="bg-yellow-950 hover:bg-yellow-900 border border-yellow-850 text-yellow-400 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer font-bold shrink-0 animate-pulse"
+                  className="bg-yellow-950 hover:bg-yellow-900 border border-yellow-850 text-yellow-400 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer font-bold shrink-0 animate-pulse touch-none select-none"
                 >
                   {inventory[selectedItemIdx].type === 'bandage' && "PRESS [Q] TO USE"}
                   {inventory[selectedItemIdx].type === 'cola' && "PRESS [Q] TO DRINK"}
@@ -5023,8 +4809,9 @@ export default function GameCanvas({
             <button
               onMouseDown={() => { keysPressed.current['KeyA'] = true; }}
               onMouseUp={() => { keysPressed.current['KeyA'] = false; }}
-              onTouchStart={() => { keysPressed.current['KeyA'] = true; }}
-              onTouchEnd={() => { keysPressed.current['KeyA'] = false; }}
+              onTouchStart={(e) => { e.preventDefault(); keysPressed.current['KeyA'] = true; }}
+              onTouchEnd={(e) => { e.preventDefault(); keysPressed.current['KeyA'] = false; }}
+              onTouchCancel={(e) => { e.preventDefault(); keysPressed.current['KeyA'] = false; }}
               className="w-12 h-12 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-900 border border-zinc-700 text-white rounded-lg flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer touch-none"
               title="Move Left (A)"
             >
@@ -5033,8 +4820,9 @@ export default function GameCanvas({
             <button
               onMouseDown={() => { keysPressed.current['KeyD'] = true; }}
               onMouseUp={() => { keysPressed.current['KeyD'] = false; }}
-              onTouchStart={() => { keysPressed.current['KeyD'] = true; }}
-              onTouchEnd={() => { keysPressed.current['KeyD'] = false; }}
+              onTouchStart={(e) => { e.preventDefault(); keysPressed.current['KeyD'] = true; }}
+              onTouchEnd={(e) => { e.preventDefault(); keysPressed.current['KeyD'] = false; }}
+              onTouchCancel={(e) => { e.preventDefault(); keysPressed.current['KeyD'] = false; }}
               className="w-12 h-12 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-900 border border-zinc-700 text-white rounded-lg flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer touch-none"
               title="Move Right (D)"
             >
@@ -5047,10 +4835,14 @@ export default function GameCanvas({
         {selectedDevice === 'MOBILE' && (
           <div className="flex justify-center gap-2 flex-1 max-w-xs">
             <button
+              onTouchStart={(e) => {
+                e.preventDefault();
+                handleInteraction();
+              }}
               onClick={() => {
                 handleInteraction();
               }}
-              className="w-full h-12 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 border border-yellow-500 hover:border-yellow-400 text-white font-mono text-xs font-bold tracking-widest uppercase rounded-lg shadow-lg shadow-yellow-600/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              className="w-full h-12 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 border border-yellow-500 hover:border-yellow-400 text-white font-mono text-xs font-bold tracking-widest uppercase rounded-lg shadow-lg shadow-yellow-600/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-none select-none"
             >
               <Sparkles size={14} />
               {isHiding ? 'EXIT CLOSET' : 'INTERACT [E]'}
@@ -5058,8 +4850,12 @@ export default function GameCanvas({
 
             {(inventory[selectedItemIdx]?.type === 'bandage' || inventory[selectedItemIdx]?.type === 'cola' || inventory[selectedItemIdx]?.type === 'lockpick' || inventory[selectedItemIdx]?.type === 'ipad' || inventory[selectedItemIdx]?.type === 'luck_potion' || inventory[selectedItemIdx]?.type === 'skeleton_key') && (
               <button
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  useActiveItem();
+                }}
                 onClick={useActiveItem}
-                className="px-4 h-12 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white font-mono text-xs font-bold tracking-wider uppercase rounded-lg shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer animate-pulse shrink-0"
+                className="px-4 h-12 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white font-mono text-xs font-bold tracking-wider uppercase rounded-lg shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer animate-pulse shrink-0 touch-none select-none"
               >
                 {inventory[selectedItemIdx]?.type === 'ipad' ? <ShoppingBag size={14} /> : <Heart size={14} fill="white" />}
                 {inventory[selectedItemIdx]?.type === 'bandage' ? 'HEAL' : inventory[selectedItemIdx]?.type === 'cola' ? 'DRINK' : inventory[selectedItemIdx]?.type === 'lockpick' ? 'LOCKPICK' : inventory[selectedItemIdx]?.type === 'ipad' ? 'OPEN IPAD' : inventory[selectedItemIdx]?.type === 'skeleton_key' ? 'UNLOCK' : 'DRINK LUCK'}
@@ -5074,9 +4870,19 @@ export default function GameCanvas({
           <button
             onMouseDown={() => setTouchSprinting(true)}
             onMouseUp={() => setTouchSprinting(false)}
-            onTouchStart={() => setTouchSprinting(true)}
-            onTouchEnd={() => setTouchSprinting(false)}
-            className={`px-6 h-12 border rounded-lg flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer font-mono text-xs font-bold uppercase ${
+            onTouchStart={(e) => {
+              e.preventDefault();
+              setTouchSprinting(true);
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              setTouchSprinting(false);
+            }}
+            onTouchCancel={(e) => {
+              e.preventDefault();
+              setTouchSprinting(false);
+            }}
+            className={`px-6 h-12 border rounded-lg flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer font-mono text-xs font-bold uppercase select-none touch-none ${
               isSprinting && stamina > 0
                 ? 'bg-cyan-600 border-cyan-500 text-white shadow-[0_0_12px_rgba(6,182,212,0.4)]'
                 : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-white'
@@ -5088,24 +4894,14 @@ export default function GameCanvas({
           </button>
 
           <button
-            onClick={() => {
-              const hasFlashlight = inventory.some(item => item.type === 'flashlight');
-              const isHoldingFlashlight = inventory[selectedItemIdx]?.type === 'flashlight';
-              if (!hasFlashlight) {
-                setAlertMessage("YOU DO NOT HAVE A FLASHLIGHT!");
-                setTimeout(() => setAlertMessage(""), 2000);
-              } else if (!isHoldingFlashlight) {
-                setAlertMessage("EQUIP FLASHLIGHT IN HOTBAR!");
-                setTimeout(() => setAlertMessage(""), 2000);
-              } else if (flashlightBattery <= 0) {
-                setAlertMessage("FLASHLIGHT BATTERY IS DEAD!");
-                setTimeout(() => setAlertMessage(""), 2000);
-              } else {
-                setFlashlightOn(prev => !prev);
-                sound.playClick();
-              }
+            onTouchStart={(e) => {
+              e.preventDefault();
+              toggleFlashlight();
             }}
-            className={`w-12 h-12 border rounded-lg flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer ${
+            onClick={() => {
+              toggleFlashlight();
+            }}
+            className={`w-12 h-12 border rounded-lg flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer touch-none select-none ${
               flashlightOn && (inventory[selectedItemIdx]?.type === 'flashlight') && flashlightBattery > 0
                 ? 'bg-amber-600/10 border-amber-500 text-amber-400 hover:bg-amber-600/20' 
                 : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'
