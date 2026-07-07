@@ -1693,6 +1693,192 @@ export default function GameCanvas({
             }
           }
         }
+
+        // C. Drawer Proximity Auto-Searching
+        const nearAutoDrawer = !inSideRoom ? drawers.find(d => !d.searched && Math.abs(playerPosition - d.x) < 45) : undefined;
+        if (nearAutoDrawer) {
+          nearAutoDrawer.searched = true;
+          setDrawers([...drawers]);
+
+          if (nearAutoDrawer.hasKey) {
+            setHasRoomKey(true);
+            setIsDoorLocked(false);
+            if (!muted) sound.playKey();
+            floatingTextsRef.current.push({
+              x: nearAutoDrawer.x,
+              y: 200,
+              text: "ROOM KEY 🔑",
+              color: "#fbbf24",
+              life: 110
+            });
+            setAlertMessage("YOU AUTO-FOUND THE ROOM KEY! DOOR UNLOCKED.");
+            setTimeout(() => setAlertMessage(""), 3000);
+          } else if (hasSideRoom && nearAutoDrawer.hasCode) {
+            setSideRoomCodeFound(true);
+            if (!muted) sound.playKey();
+            floatingTextsRef.current.push({
+              x: nearAutoDrawer.x,
+              y: 200,
+              text: `CODE: ${sideRoomCode} 📝`,
+              color: "#10b981",
+              life: 140
+            });
+            setAlertMessage(`AUTO-FOUND CHEST SCROLL: CODE IS ${sideRoomCode}`);
+            setTimeout(() => setAlertMessage(""), 4500);
+          } else {
+            // Roll drop percentage
+            const roll = Math.random();
+            const hasLuck = luckPotionTimerRef.current > 0;
+            const luckMultiplier = hasLuck ? 1.3 : 1.0;
+
+            // iPad has 0.9% base drop chance
+            const ipadChance = 0.009 * luckMultiplier;
+            // Luck Potion has 4.3% base drop chance
+            const luckPotionChance = 0.043 * luckMultiplier;
+
+            if (roll < ipadChance) {
+              const success = addToInventory('ipad', 'iPad', 'Sleek electronic tablet. Open Jeff Express to buy items.');
+              if (success) {
+                if (!muted) sound.playKey();
+                floatingTextsRef.current.push({
+                  x: nearAutoDrawer.x,
+                  y: 200,
+                  text: "FOUND IPAD! 📱",
+                  color: "#a855f7",
+                  life: 120
+                });
+                setAlertMessage("YOU AUTO-FOUND AN IPAD! EQUIP IT AND PRESS Q OR TAP USE TO OPEN THE SHOP!");
+                setTimeout(() => setAlertMessage(""), 4500);
+              }
+            } else if (roll < ipadChance + luckPotionChance) {
+              const success = addToInventory('luck_potion', 'Luck Potion', 'Boosts rare drops/stock by +30% for 44s. Press Q to drink.');
+              if (success) {
+                if (!muted) sound.playHeal();
+                floatingTextsRef.current.push({
+                  x: nearAutoDrawer.x,
+                  y: 200,
+                  text: "FOUND LUCK POTION! 🍀",
+                  color: "#10b981",
+                  life: 120
+                });
+                setAlertMessage("YOU AUTO-FOUND A LUCK POTION! DRINK IT [Q] TO BOOST YOUR LUCK BY 30%!");
+                setTimeout(() => setAlertMessage(""), 4500);
+              }
+            } else {
+              // Normal drops
+              const normalRoll = Math.random();
+              const baseCrucifixChance = 0.03;
+              const crucifixChance = baseCrucifixChance * luckMultiplier; // 3% * 1.3 = 3.9%
+
+              const baseColaChance = 0.10;
+              const colaChance = baseColaChance * luckMultiplier; // 10% * 1.3 = 13%
+
+              const baseCoins55Chance = 0.08;
+              const coins55Chance = baseCoins55Chance * luckMultiplier; // 8% * 1.3 = 10.4%
+
+              const baseBandageChance = 0.12;
+              const baseBatteryChance = 0.10;
+              const baseCoins20Chance = 0.20;
+
+              let cumulative = 0;
+
+              cumulative += crucifixChance;
+              if (normalRoll < cumulative) {
+                const success = addToInventory('crucifix', 'Crucifix', 'Banish Rush. Equip to protect.');
+                if (success) {
+                  if (!muted) sound.playKey();
+                  floatingTextsRef.current.push({
+                    x: nearAutoDrawer.x,
+                    y: 200,
+                    text: "FOUND CRUCIFIX!",
+                    color: "#3b82f6",
+                    life: 90
+                  });
+                }
+              } else {
+                cumulative += coins55Chance;
+                if (normalRoll < cumulative) {
+                  setCoins(prev => prev + 55);
+                  triggerCoinAnimation(55, nearAutoDrawer.x);
+                  if (!muted) sound.playCoin();
+                  floatingTextsRef.current.push({
+                    x: nearAutoDrawer.x,
+                    y: 200,
+                    text: "+55 COINS!",
+                    color: "#fbbf24",
+                    life: 90
+                  });
+                } else {
+                  cumulative += colaChance;
+                  if (normalRoll < cumulative) {
+                    const success = addToInventory('cola', 'Speed Cola', 'Incredible speed & infinite stamina for 11s. Press Q to drink.');
+                    if (success) {
+                      if (!muted) sound.playHeal();
+                      floatingTextsRef.current.push({
+                        x: nearAutoDrawer.x,
+                        y: 200,
+                        text: "FOUND SPEED COLA! ⚡",
+                        color: "#fbbf24",
+                        life: 110
+                      });
+                    }
+                  } else {
+                    cumulative += baseBandageChance;
+                    if (normalRoll < cumulative) {
+                      const success = addToInventory('bandage', 'Bandage', 'Heals 40 Health. Press Q to use.');
+                      if (success) {
+                        if (!muted) sound.playHeal();
+                        floatingTextsRef.current.push({
+                          x: nearAutoDrawer.x,
+                          y: 200,
+                          text: "FOUND BANDAGE",
+                          color: "#10b981",
+                          life: 90
+                        });
+                      }
+                    } else {
+                      cumulative += baseBatteryChance;
+                      if (normalRoll < cumulative) {
+                        setFlashlightBattery(prev => Math.min(100, prev + 50));
+                        if (!muted) sound.playKey();
+                        floatingTextsRef.current.push({
+                          x: nearAutoDrawer.x,
+                          y: 200,
+                          text: "+50% BATTERY!",
+                          color: "#06b6d4",
+                          life: 90
+                        });
+                      } else {
+                        cumulative += baseCoins20Chance;
+                        if (normalRoll < cumulative) {
+                          setCoins(prev => prev + 20);
+                          triggerCoinAnimation(20, nearAutoDrawer.x);
+                          if (!muted) sound.playCoin();
+                          floatingTextsRef.current.push({
+                            x: nearAutoDrawer.x,
+                            y: 200,
+                            text: "+20 COINS",
+                            color: "#fbbf24",
+                            life: 90
+                          });
+                        } else {
+                          if (!muted) sound.playClick();
+                          floatingTextsRef.current.push({
+                            x: nearAutoDrawer.x,
+                            y: 200,
+                            text: "EMPTY",
+                            color: "#6b7280",
+                            life: 80
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 
       // 2. Update Monster Rush / Collision / Banishment / Rebound
