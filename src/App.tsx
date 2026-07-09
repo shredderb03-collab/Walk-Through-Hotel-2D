@@ -13,6 +13,7 @@ import VictoryScreen from './components/VictoryScreen';
 import { sound } from './utils/audio';
 import HubBackground from './components/HubBackground';
 import DoorsThumbnail from './components/DoorsThumbnail';
+import TacticalGrid from './components/TacticalGrid';
 
 const INITIAL_STATS: GameStats = {
   doorsOpened: 1,
@@ -25,7 +26,7 @@ const INITIAL_STATS: GameStats = {
 };
 
 export default function App() {
-  const [viewMode, setViewMode] = useState<'HUB' | 'INTRO' | 'GAME'>('HUB');
+  const [viewMode, setViewMode] = useState<'HUB' | 'INTRO' | 'GAME' | 'TACTICAL_GRID'>('HUB');
   const [gameState, setGameState] = useState<GameState>('START');
   const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
   const [introStep, setIntroStep] = useState<'DEVICE_SELECT' | 'CONTROLS' | 'ORIGINAL'>('DEVICE_SELECT');
@@ -193,7 +194,7 @@ export default function App() {
                     Games Category
                   </h2>
                   <span className="ml-auto text-[10px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800/80 px-2 py-0.5 rounded">
-                    1 DEPLOYED
+                    2 DEPLOYED
                   </span>
                 </div>
 
@@ -237,31 +238,78 @@ export default function App() {
                     </button>
                   </motion.div>
 
-                  {/* LOCKED GAME SLOT */}
-                  <div className="bg-zinc-900/15 border border-zinc-800/40 border-dashed rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden select-none opacity-60">
-                    <div className="relative w-full h-44 bg-zinc-950/20 rounded-xl border border-zinc-800/30 border-dashed flex flex-col items-center justify-center text-zinc-650 gap-2 mb-4">
-                      <Lock size={24} className="opacity-30" />
-                      <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">
-                        SLOT UNASSIGNED
-                      </span>
+                  {/* GAME 2: TACTICAL GRID: OVERDRIVE ENGINE */}
+                  <motion.div
+                    whileHover={{ y: -4, borderColor: "rgba(6, 182, 212, 0.4)" }}
+                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                    className="bg-zinc-900/45 border border-zinc-800/80 rounded-2xl p-5 flex flex-col justify-between shadow-xl backdrop-blur-sm relative overflow-hidden group transition-all"
+                  >
+                    {/* Animated Teaser Thumbnail for Tactical Grid */}
+                    <div className="relative w-full h-44 bg-slate-950 rounded-xl border border-zinc-800/80 overflow-hidden flex flex-col justify-between p-3.5 mb-4 group-hover:border-cyan-500/40 transition-colors select-none">
+                      {/* Grid background lines */}
+                      <div className="absolute inset-0 opacity-[0.08] bg-[linear-gradient(rgba(0,243,255,0.2)_1px,transparent_1px),linear-gradient(90deg,rgba(0,243,255,0.2)_1px,transparent_1px)] bg-[size:16px_16px]" />
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.12)_0%,transparent_70%)] pointer-events-none" />
+                      
+                      {/* Neon path illustration */}
+                      <div className="absolute w-[180px] h-3 bg-zinc-800/40 rounded-full top-[60px] left-[-20px] -rotate-[15deg] border border-cyan-500/15" />
+                      <div className="absolute w-[180px] h-3 bg-zinc-800/40 rounded-full top-[100px] left-[100px] rotate-[25deg] border border-cyan-500/15" />
+                      
+                      {/* Glowing entities representing creep/enemy and tower */}
+                      <motion.div 
+                        animate={{ x: [0, 150, 0] }}
+                        transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                        className="absolute w-4.5 h-4.5 bg-rose-500 rounded-full top-[42px] left-2 shadow-[0_0_12px_#f43f5e]"
+                      />
+                      <motion.div 
+                        animate={{ x: [100, 240, 100] }}
+                        transition={{ duration: 5, repeat: Infinity, ease: "linear", delay: 1 }}
+                        className="absolute w-4 h-4 bg-yellow-400 rounded-full top-[112px] left-2 shadow-[0_0_10px_#eab308]"
+                      />
+
+                      {/* Tower turret placement */}
+                      <div className="absolute w-6.5 h-6.5 bg-zinc-900 border border-zinc-700 rounded-lg top-[75px] left-[90px] shadow-lg flex items-center justify-center">
+                        <div className="w-2.5 h-2.5 bg-cyan-400 rounded-full shadow-[0_0_8px_#22d3ee]" />
+                        {/* laser beam firing */}
+                        <motion.div 
+                          animate={{ opacity: [0, 1, 0] }}
+                          transition={{ duration: 1.5, repeat: Infinity }}
+                          className="absolute h-0.5 w-[50px] bg-cyan-400 origin-left left-3 rotate-[120deg] shadow-[0_0_6px_#22d3ee]" 
+                        />
+                      </div>
+
+                      {/* Watermark badge */}
+                      <div className="ml-auto text-[8.5px] font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-1.5 py-0.5 rounded uppercase font-bold tracking-widest relative z-10">
+                        OVERDRIVE v2.0
+                      </div>
                     </div>
 
+                    {/* Metadata & Description */}
                     <div>
-                      <h3 className="text-base font-mono font-bold text-zinc-650 uppercase mb-1.5">
-                        Project: Classified
-                      </h3>
-                      <p className="text-zinc-650 font-mono text-[11px] leading-relaxed mb-6">
-                        Cool_85™ has not authorized any secondary games on this server yet. Stay tuned as more immersive gameplay experiences are developed.
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <h3 className="text-lg font-mono font-extrabold text-white uppercase group-hover:text-cyan-400 transition-colors">
+                          Tactical Grid
+                        </h3>
+                        <span className="text-[9px] font-mono text-cyan-400 border border-cyan-500/30 px-1.5 py-0.2 rounded bg-cyan-950/10">
+                          Deployable
+                        </span>
+                      </div>
+                      <p className="text-zinc-400 font-mono text-[11px] leading-relaxed mb-6">
+                        An intense tactical grid tower defense game. Construct automated spike matrices, long-range snipers, mobile slimes, miniguns, and flamethrowers to survive increasingly fast waves of sectors.
                       </p>
                     </div>
 
+                    {/* Launch button */}
                     <button
-                      disabled
-                      className="w-full bg-zinc-900/50 border border-zinc-800 text-zinc-600 font-mono font-bold text-xs tracking-wider uppercase py-3 px-4 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed"
+                      onClick={() => {
+                        sound.playClick();
+                        setViewMode('TACTICAL_GRID');
+                      }}
+                      className="w-full bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-zinc-950 font-mono font-bold text-xs tracking-wider uppercase py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_4px_12px_rgba(6,182,212,0.15)] group-hover:shadow-[0_4px_20_rgba(6,182,212,0.3)]"
                     >
-                      Locked
+                      <Play size={12} fill="black" />
+                      Launch Tactical Grid
                     </button>
-                  </div>
+                  </motion.div>
 
                 </div>
               </div>
@@ -697,6 +745,18 @@ export default function App() {
                   ← Return to Cool_85™ Hub
                 </button>
               </div>
+            </motion.div>
+          )}
+
+          {viewMode === 'TACTICAL_GRID' && (
+            <motion.div
+              key="tactical_grid"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              className="w-full flex-1 flex flex-col items-center"
+            >
+              <TacticalGrid onBack={() => setViewMode('HUB')} />
             </motion.div>
           )}
         </AnimatePresence>

@@ -519,7 +519,7 @@ export default function GameCanvas({
           }
           // Use current closetX positions if set, or calculate based on doorNum
           const closetsCount = doorNum === 100 ? 1 : Math.random() > 0.5 ? 2 : 1;
-          const tempClosets = doorNum === 40 ? [] : (closetsCount === 2 ? [350, 600] : [doorNum === 100 ? 350 : (hasDupe ? 320 : 450)]);
+          const tempClosets = doorNum === 40 ? [] : (closetsCount === 2 ? [350, 600] : [doorNum === 100 ? 220 : (hasDupe ? 320 : 450)]);
           tempClosets.forEach(cx => {
             blocked.push([cx - 20, cx + 55 + 20]);
           });
@@ -684,7 +684,7 @@ export default function GameCanvas({
         if (sideRoomSpawn) {
           setClosetX([580]); // Shift single closet to 580 (from 450) so it doesn't block/sit next to side room door at 360
         } else {
-          setClosetX([doorNum === 100 ? 350 : (hasDupe ? 320 : 450)]);
+          setClosetX([doorNum === 100 ? 220 : (hasDupe ? 320 : 450)]);
         }
       }
     }
@@ -1092,6 +1092,24 @@ export default function GameCanvas({
         life: 110
       });
       setAlertMessage("DRANK LUCK POTION: +30% CHANCE OF RARE ITEMS FOR 44 SECONDS!");
+      setTimeout(() => setAlertMessage(""), 3500);
+
+      // Remove item
+      setInventory(prev => prev.filter((_, idx) => idx !== selectedItemIdx));
+    }
+    else if (activeItem.type === 'vitamins') {
+      setHealth(prev => Math.min(100, prev + 25));
+      colaTimerRef.current = 4.5;
+      setColaTimer(4.5);
+      if (!muted) sound.playHeal();
+      floatingTextsRef.current.push({
+        x: playerPosition,
+        y: 220,
+        text: "+25 HP & VITAMIN ENERGY! 💊⚡",
+        color: "#f43f5e",
+        life: 90
+      });
+      setAlertMessage("TOOK VITAMINS: HEALED 25 HP & GAINED SPEED FOR 4.5 SECONDS!");
       setTimeout(() => setAlertMessage(""), 3500);
 
       // Remove item
@@ -1557,10 +1575,25 @@ export default function GameCanvas({
   toggleFlashlightRef.current = toggleFlashlight;
 
   // Buy Item from Shop Counter
-  const buyItem = (type: ItemType, cost: number, label: string, desc: string) => {
+  const buyItem = (type: ItemType | 'battery', cost: number, label: string, desc: string) => {
     if (coins < cost) {
       setAlertMessage("NOT ENOUGH COINS!");
       setTimeout(() => setAlertMessage(""), 2000);
+      return;
+    }
+    if (type === 'battery') {
+      setCoins(prev => prev - cost);
+      setFlashlightBattery(100);
+      if (!muted) sound.playCoin();
+      floatingTextsRef.current.push({
+        x: playerPosition,
+        y: 200,
+        text: `FLASHLIGHT RECHARGED! 🔋`,
+        color: "#22d3ee",
+        life: 80
+      });
+      setAlertMessage("BATTERY PURCHASED! FLASHLIGHT IS FULLY CHARGED.");
+      setTimeout(() => setAlertMessage(""), 2500);
       return;
     }
     const success = addToInventory(type, label, desc);
@@ -2904,6 +2937,8 @@ export default function GameCanvas({
           else if (box.itemType === 'luck_potion') itemEmoji = "🍀";
           else if (box.itemType === 'skeleton_key') itemEmoji = "🗝️";
           else if (box.itemType === 'pendant') itemEmoji = "📿";
+          else if (box.itemType === 'vitamins') itemEmoji = "💊";
+          else if (box.itemType === 'ipad') itemEmoji = "📱";
           
           ctx.fillText(itemEmoji, 0, itemY);
           ctx.restore();
@@ -3389,6 +3424,7 @@ export default function GameCanvas({
           }
         }
       }
+      }
 
       // Draw Closets (Wardrobe cabinets)
       closetX.forEach(cx => {
@@ -3414,7 +3450,6 @@ export default function GameCanvas({
         ctx.textAlign = 'center';
         ctx.fillText("CLOSET", cx + cw / 2, cy - 8);
       });
-      }
 
       // Draw Player Character (Stylized Survivor)
       if (!isHiding) {
@@ -3517,6 +3552,65 @@ export default function GameCanvas({
           ctx.beginPath();
           ctx.arc(px + (playerFacing === 'right' ? 14 : -14), py + 16 - playerBob, 12, 0, Math.PI*2);
           ctx.fill();
+        }
+
+        // If holding speed cola
+        if (equippedItem?.type === 'cola') {
+          ctx.fillStyle = '#f59e0b'; // Amber soda can
+          ctx.fillRect(px + (playerFacing === 'right' ? 12 : -18), py + 16 - playerBob, 5, 8);
+          ctx.fillStyle = '#ef4444'; // Red stripe
+          ctx.fillRect(px + (playerFacing === 'right' ? 12 : -18), py + 19 - playerBob, 5, 2);
+        }
+
+        // If holding lockpick
+        if (equippedItem?.type === 'lockpick') {
+          ctx.fillStyle = '#d1d5db'; // Silver metallic
+          ctx.fillRect(px + (playerFacing === 'right' ? 12 : -18), py + 18 - playerBob, 6, 3);
+          ctx.fillStyle = '#f59e0b'; // Golden tip
+          ctx.fillRect(px + (playerFacing === 'right' ? 18 : -14), py + 18 - playerBob, 2, 2);
+        }
+
+        // If holding luck potion
+        if (equippedItem?.type === 'luck_potion') {
+          ctx.fillStyle = '#10b981'; // Green liquid
+          ctx.beginPath();
+          ctx.arc(px + (playerFacing === 'right' ? 14 : -16), py + 19 - playerBob, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#d1d5db'; // Cork neck
+          ctx.fillRect(px + (playerFacing === 'right' ? 13 : -15), py + 13 - playerBob, 2, 3);
+        }
+
+        // If holding skeleton key
+        if (equippedItem?.type === 'skeleton_key') {
+          ctx.fillStyle = '#a78bfa'; // Purple magic key
+          ctx.fillRect(px + (playerFacing === 'right' ? 12 : -18), py + 16 - playerBob, 8, 3);
+          ctx.fillRect(px + (playerFacing === 'right' ? 18 : -14), py + 19 - playerBob, 2, 4);
+        }
+
+        // If holding iPad
+        if (equippedItem?.type === 'ipad') {
+          ctx.fillStyle = '#1e293b'; // Slate iPad casing
+          ctx.fillRect(px + (playerFacing === 'right' ? 11 : -21), py + 14 - playerBob, 10, 12);
+          ctx.fillStyle = '#22d3ee'; // Glowing cyan screen
+          ctx.fillRect(px + (playerFacing === 'right' ? 12 : -20), py + 15 - playerBob, 8, 10);
+        }
+
+        // If holding pendant
+        if (equippedItem?.type === 'pendant') {
+          ctx.fillStyle = '#fb7185'; // Pink sparkling crystal
+          ctx.beginPath();
+          ctx.arc(px + (playerFacing === 'right' ? 14 : -16), py + 18 - playerBob, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#fb7185';
+          ctx.strokeRect(px + (playerFacing === 'right' ? 12 : -18), py + 13 - playerBob, 4, 3); // chain
+        }
+
+        // If holding vitamins
+        if (equippedItem?.type === 'vitamins') {
+          ctx.fillStyle = '#f43f5e'; // Rose pink pill bottle
+          ctx.fillRect(px + (playerFacing === 'right' ? 12 : -18), py + 15 - playerBob, 6, 9);
+          ctx.fillStyle = '#ffffff'; // White cap
+          ctx.fillRect(px + (playerFacing === 'right' ? 11 : -17), py + 13 - playerBob, 8, 2);
         }
 
         // Flashlight Cone Drawing
@@ -4261,7 +4355,7 @@ export default function GameCanvas({
               </p>
 
               {/* Items Shelf */}
-              <div className="flex flex-col gap-3 mb-6">
+              <div className="flex flex-col gap-3 mb-6 max-h-[340px] overflow-y-auto pr-1">
                 
                 {/* 1. Bandage */}
                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
@@ -4374,6 +4468,101 @@ export default function GameCanvas({
                     className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
                   >
                     180 COINS
+                  </button>
+                </div>
+
+                {/* 7. Master Lockpick */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
+                      <Key className="text-yellow-500" size={12} />
+                      Master Lockpick
+                    </span>
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      Instantly unlocks locked doors or side chests. Consumed on use.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => buyItem('lockpick', 65, 'Lockpick', 'Instantly unlocks standard locked doors or side chests.')}
+                    className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
+                  >
+                    65 COINS
+                  </button>
+                </div>
+
+                {/* 8. Luck Potion */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
+                      <Sparkles className="text-emerald-400 animate-pulse" size={12} />
+                      Jeff's Luck Potion
+                    </span>
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      Increases your chance of finding rare loot and stock for 44 seconds.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => buyItem('luck_potion', 60, 'Luck Potion', 'DRANK LUCK POTION: +30% CHANCE OF RARE ITEMS FOR 44 SECONDS!')}
+                    className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
+                  >
+                    60 COINS
+                  </button>
+                </div>
+
+                {/* 9. A-90's iPad */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
+                      <ShoppingBag className="text-cyan-400" size={12} />
+                      A-90's iPad Tablet
+                    </span>
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      Order Jeff's Express Delivery at any door! Ships via drone upon exit.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => buyItem('ipad', 110, 'iPad', "Allows ordering Jeff's Express Delivery from anywhere!")}
+                    className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
+                  >
+                    110 COINS
+                  </button>
+                </div>
+
+                {/* 10. Energy Vitamins */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
+                      <Heart className="text-rose-400 fill-rose-400/10 animate-pulse" size={12} />
+                      Energy Vitamins
+                    </span>
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      Restores 25 health and grants 4.5s speed/infinite stamina boost.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => buyItem('vitamins', 35, 'Vitamins', 'TOOK VITAMINS: HEALED 25 HP & GAINED SPEED FOR 4.5 SECONDS!')}
+                    className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
+                  >
+                    35 COINS
+                  </button>
+                </div>
+
+                {/* 11. Battery Refill */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex justify-between items-center hover:border-cyan-900 transition-colors">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-mono text-white font-bold uppercase flex items-center gap-1.5">
+                      <Power className="text-cyan-400" size={12} />
+                      Flashlight Battery Refill
+                    </span>
+                    <span className="text-[9px] font-mono text-zinc-500">
+                      Instantly recharges your flashlight battery back to 100%.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => buyItem('battery', 25, 'Battery Refill', 'Instantly recharges flashlight battery to 100%.')}
+                    className="bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white font-mono text-[10px] font-bold py-1.5 px-3 rounded uppercase transition-colors shrink-0"
+                  >
+                    25 COINS
                   </button>
                 </div>
 
@@ -4753,6 +4942,8 @@ export default function GameCanvas({
                     {item.type === 'luck_potion' && <Sparkles size={16} className="text-emerald-400 animate-pulse" />}
                     {item.type === 'skeleton_key' && <Key size={16} className="text-purple-400 animate-pulse" />}
                     {item.type === 'pendant' && <Sparkles size={16} className="text-pink-400" />}
+                    {item.type === 'ipad' && <ShoppingBag size={16} className="text-cyan-400" />}
+                    {item.type === 'vitamins' && <Zap size={16} className="text-rose-400 animate-pulse" />}
                     <span className="text-[7.5px] font-mono text-zinc-300 font-bold truncate max-w-[50px] uppercase mt-1">
                       {item.label}
                     </span>
@@ -4774,7 +4965,7 @@ export default function GameCanvas({
               <span className="text-xs font-mono text-zinc-300">
                 <span className="text-yellow-500 font-bold uppercase">{inventory[selectedItemIdx].label}:</span> {inventory[selectedItemIdx].description}
               </span>
-              {(inventory[selectedItemIdx].type === 'bandage' || inventory[selectedItemIdx].type === 'cola' || inventory[selectedItemIdx].type === 'lockpick' || inventory[selectedItemIdx].type === 'ipad' || inventory[selectedItemIdx].type === 'luck_potion' || inventory[selectedItemIdx].type === 'skeleton_key') && (
+              {(inventory[selectedItemIdx].type === 'bandage' || inventory[selectedItemIdx].type === 'cola' || inventory[selectedItemIdx].type === 'lockpick' || inventory[selectedItemIdx].type === 'ipad' || inventory[selectedItemIdx].type === 'luck_potion' || inventory[selectedItemIdx].type === 'skeleton_key' || inventory[selectedItemIdx].type === 'vitamins') && (
                 <button
                   onTouchStart={(e) => {
                     e.preventDefault();
@@ -4789,6 +4980,7 @@ export default function GameCanvas({
                   {inventory[selectedItemIdx].type === 'ipad' && "PRESS [Q] TO OPEN IPAD"}
                   {inventory[selectedItemIdx].type === 'luck_potion' && "PRESS [Q] TO DRINK"}
                   {inventory[selectedItemIdx].type === 'skeleton_key' && "PRESS [Q] TO UNLOCK"}
+                  {inventory[selectedItemIdx].type === 'vitamins' && "PRESS [Q] TO TAKE"}
                 </button>
               )}
             </div>
@@ -4848,7 +5040,7 @@ export default function GameCanvas({
               {isHiding ? 'EXIT CLOSET' : 'INTERACT [E]'}
             </button>
 
-            {(inventory[selectedItemIdx]?.type === 'bandage' || inventory[selectedItemIdx]?.type === 'cola' || inventory[selectedItemIdx]?.type === 'lockpick' || inventory[selectedItemIdx]?.type === 'ipad' || inventory[selectedItemIdx]?.type === 'luck_potion' || inventory[selectedItemIdx]?.type === 'skeleton_key') && (
+            {(inventory[selectedItemIdx]?.type === 'bandage' || inventory[selectedItemIdx]?.type === 'cola' || inventory[selectedItemIdx]?.type === 'lockpick' || inventory[selectedItemIdx]?.type === 'ipad' || inventory[selectedItemIdx]?.type === 'luck_potion' || inventory[selectedItemIdx]?.type === 'skeleton_key' || inventory[selectedItemIdx]?.type === 'vitamins') && (
               <button
                 onTouchStart={(e) => {
                   e.preventDefault();
@@ -4858,7 +5050,7 @@ export default function GameCanvas({
                 className="px-4 h-12 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white font-mono text-xs font-bold tracking-wider uppercase rounded-lg shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer animate-pulse shrink-0 touch-none select-none"
               >
                 {inventory[selectedItemIdx]?.type === 'ipad' ? <ShoppingBag size={14} /> : <Heart size={14} fill="white" />}
-                {inventory[selectedItemIdx]?.type === 'bandage' ? 'HEAL' : inventory[selectedItemIdx]?.type === 'cola' ? 'DRINK' : inventory[selectedItemIdx]?.type === 'lockpick' ? 'LOCKPICK' : inventory[selectedItemIdx]?.type === 'ipad' ? 'OPEN IPAD' : inventory[selectedItemIdx]?.type === 'skeleton_key' ? 'UNLOCK' : 'DRINK LUCK'}
+                {inventory[selectedItemIdx]?.type === 'bandage' ? 'HEAL' : inventory[selectedItemIdx]?.type === 'cola' ? 'DRINK' : inventory[selectedItemIdx]?.type === 'lockpick' ? 'LOCKPICK' : inventory[selectedItemIdx]?.type === 'ipad' ? 'OPEN IPAD' : inventory[selectedItemIdx]?.type === 'skeleton_key' ? 'UNLOCK' : inventory[selectedItemIdx]?.type === 'vitamins' ? 'TAKE VITAMINS' : 'DRINK LUCK'}
               </button>
             )}
           </div>
